@@ -1,28 +1,44 @@
 payer: UnitedHealthcare
 
+organization:
+  geography: WA
+
+indexes:
+  reimbursement:
+    url: https://www.uhcprovider.com/en/policies-protocols/commercial-policies/commercial-reimbursement-policies.html
+
+  medical_drug:
+    url: https://www.uhcprovider.com/en/policies-protocols/commercial-policies/commercial-medical-drug-policies.html
+
 documents:
   - id: reimbursement_bulletin_aug_2026
     title: UnitedHealthcare Commercial Reimbursement Policy Update Bulletin - August 2026
     document_type: update_bulletin
+    index: reimbursement
     source_url: "https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-reimbursement/rpub/UHC-COMM-RPUB-August-2026.pdf"
 
   - id: mri_ct_site_of_service
     title: Magnetic Resonance Imaging (MRI) and Computed Tomography (CT) Scan - Site of Service
     document_type: medical_policy
+    index: medical_drug
     source_url: "https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/mri-ct-scan-site-of-service.pdf"
 
   - id: spinraza
     title: Spinraza (Nusinersen)
     document_type: medical_benefit_drug_policy
+    index: medical_drug
     source_url: "https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/spinraza-nusinersen.pdf"
 
   - id: allergen_testing
     title: Allergen Testing Policy, Professional and Facility
     document_type: reimbursement_policy
+    index: reimbursement
+    effective_date_bulletin: reimbursement_bulletin_aug_2026
     source_url: "https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-reimbursement/COMM-Allergen-Testing-Policy.pdf"
 
   - id: sleep_studies
     title: Sleep Studies
     document_type: medical_policy
     role: supplemental_validation
+    index: medical_drug
     source_url: "https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/sleep-studies.pdf"

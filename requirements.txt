@@ -1,0 +1,6 @@
+requests
+PyMuPDF
+PyYAML
+pydantic
+beautifulsoup4
+pytest

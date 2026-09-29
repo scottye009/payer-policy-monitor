@@ -1,0 +1,53 @@
+change_id,document_id,classification,relevance,reviewer_decision,reviewer_note,effective_date,potential_annual_claim_lines,summary
+mri_ct_site_of_service-0005,mri_ct_site_of_service,substantive,relevant,relevant,,9/1/26,,"Added CPT code 70471 for computed tomographic angiography (CTA) of the head and neck with contrast, including noncontrast images when performed and image postprocessing."
+mri_ct_site_of_service-0003,mri_ct_site_of_service,substantive,relevant,relevant,,9/1/26,940,The age threshold for medically necessary MRI/CT imaging in the hospital outpatient department was increased from under 16 years to under 18 years of age.
+spinraza-0002,spinraza,substantive,relevant,relevant,,9/1/26,,"Changed 'On' to 'One of the following:' in a list of criteria, altering the logical structure of requirements."
+spinraza-0003,spinraza,substantive,relevant,relevant,,9/1/26,38,Expanded the list of gene replacement therapies by adding Itvisma (onasemnogene abeparvovec-brve) as an example alongside Zolgensma for which prior receipt disqualifies a patient from Spinraza coverage.
+spinraza-0004,spinraza,substantive,relevant,relevant,,9/1/26,60,"The policy now includes an additional gene replacement therapy (Itvisma) by name, requires documentation of functional decline via medical records, and adds a new condition prohibiting planned inpatient admissions solely for Spinraza administration. The initial authorization period is now tied more precisely to FDA-approved dosing regimens, specifying different loading dose counts based on regimen type."
+spinraza-0007,spinraza,substantive,relevant,relevant,,9/1/26,60,Addition of a new condition that the provider must not request a planned inpatient admission solely for Spinraza administration.
+sleep_studies-0002,sleep_studies,substantive,relevant,relevant,,7/1/26,705,Removed 'technically inadequate' as a qualifying criterion for medically necessary attended full-channel polysomnography following a prior HSAT in individuals with suspected OSA.
+sleep_studies-0006,sleep_studies,substantive,relevant,relevant,,7/1/26,705,"The condition for a full-night PAP titration study has been broadened from requiring 'inadequate or not feasible split-night study' to allowing it whenever there is a confirmed diagnosis of OSA or other sleep-disordered breathing, regardless of split-night feasibility."
+sleep_studies-0007,sleep_studies,substantive,relevant,relevant,,7/1/26,705,"The AFTER version adds a conditional clause requiring that the general criteria for an attended study must first be met before repeat testing is considered medically necessary, and removes 'changes in cardiovascular disease' as a qualifying condition for repeat testing."
+sleep_studies-0004,sleep_studies,substantive,relevant,relevant,,7/1/26,705,"Change from 'behaviors suspicious of Rapid Eye Movement Sleep Behavior Disorder (RBD)' to 'behaviors or behaviors suspicious of RBD' broadens the criterion by separating documented disruptive behaviors from those merely suspicious of RBD, potentially expanding coverage."
+mri_ct_site_of_service-0002,mri_ct_site_of_service,substantive,irrelevant,,,9/1/26,,"The policy now explicitly excludes Illinois from the states where this Medical Policy applies for Individual Exchange plans, whereas it previously did not mention Illinois as an exception."
+mri_ct_site_of_service-0000,mri_ct_site_of_service,non_substantive,,,,9/1/26,,Removal of a simulated prior version banner indicating the document was not an original payer artifact.
+mri_ct_site_of_service-0001,mri_ct_site_of_service,non_substantive,,,,9/1/26,,Update to policy number and effective date.
+mri_ct_site_of_service-0004,mri_ct_site_of_service,non_substantive,,,,9/1/26,,"The change consists of an update to the effective date in the header/footer from 01/01/2026 to 09/01/2026, with no alterations to the policy language in the Coverage Rationale section. The core coverage criteria remain unchanged."
+mri_ct_site_of_service-0006,mri_ct_site_of_service,non_substantive,,,,9/1/26,,Change in effective date from 01/01/2026 to 09/01/2026 in header/footer; no change in policy content.
+mri_ct_site_of_service-0007,mri_ct_site_of_service,non_substantive,,,,9/1/26,,"The effective date in the header/footer of the policy document was updated from 01/01/2026 to 09/01/2026, along with pagination and proprietary notices; no changes to policy language or coverage rules are present in the provided text."
+mri_ct_site_of_service-0008,mri_ct_site_of_service,non_substantive,,,,9/1/26,,"The effective date in the header/footer of the policy document was updated from 01/01/2026 to 09/01/2026, along with administrative page numbering and copyright boilerplate. No changes to policy language or coverage rules are present in the provided text."
+mri_ct_site_of_service-0009,mri_ct_site_of_service,non_substantive,,,,9/1/26,,"The effective date in the header/footer was updated from 01/01/2026 to 09/01/2026, with no change to policy content."
+mri_ct_site_of_service-0010,mri_ct_site_of_service,non_substantive,,,,9/1/26,,"The change involves only the effective date in the header/footer from '01/01/2026' to '09/01/2026', with no alteration to policy language or clinical content."
+mri_ct_site_of_service-0011,mri_ct_site_of_service,non_substantive,,,,9/1/26,,The effective date in the footer changed from 01/01/2026 to 09/01/2026; no policy language changes are present in the provided text.
+spinraza-0000,spinraza,non_substantive,,,,9/1/26,,Update to policy number and addition of effective date and 'Instructions for Use' header; no change to clinical or coverage content.
+spinraza-0001,spinraza,non_substantive,,,,9/1/26,,"Removal of policy number, effective date, and 'Instructions for Use' line from the header/footer-like section of the document."
+spinraza-0005,spinraza,non_substantive,,,,9/1/26,,The addition of a header section with document metadata and a list item placeholder.
+spinraza-0008,spinraza,non_substantive,,,,9/1/26,,Update to effective date and copyright notice in header/footer boilerplate.
+spinraza-0009,spinraza,non_substantive,,,,9/1/26,,Update to effective date and copyright notice in header/footer boilerplate.
+spinraza-0011,spinraza,non_substantive,,,,9/1/26,,Update to effective date and copyright notice formatting in header/footer.
+spinraza-0012,spinraza,non_substantive,,,,9/1/26,,Update to effective date and copyright notice in header/footer.
+spinraza-0013,spinraza,non_substantive,,,,9/1/26,,Update to effective date and copyright notice in header/footer boilerplate.
+spinraza-0015,spinraza,non_substantive,,,,9/1/26,,Update to effective date and copyright notice formatting in footer.
+sleep_studies-0000,sleep_studies,non_substantive,,,,7/1/26,,Removal of a simulated prior version banner that was not an original payer artifact.
+sleep_studies-0001,sleep_studies,non_substantive,,,,7/1/26,,Policy number and effective date updated.
+sleep_studies-0003,sleep_studies,non_substantive,,,,7/1/26,,Effective date updated from 01/01/2026 to 07/01/2026 in header.
+sleep_studies-0005,sleep_studies,non_substantive,,,,7/1/26,,Update to effective date in header from 01/01/2026 to 07/01/2026.
+sleep_studies-0008,sleep_studies,non_substantive,,,,7/1/26,,Update to effective date in header from 01/01/2026 to 07/01/2026 with no change to policy content.
+sleep_studies-0009,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 in the header of the Definitions section.
+sleep_studies-0010,sleep_studies,non_substantive,,,,7/1/26,,Update to effective date in header from 01/01/2026 to 07/01/2026; no change to definition text provided.
+sleep_studies-0011,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 with no accompanying change in policy language or rules.
+sleep_studies-0012,sleep_studies,non_substantive,,,,7/1/26,,Update to effective date in header from 01/01/2026 to 07/01/2026; no change to policy text.
+sleep_studies-0013,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 in header; no change to clinical content.
+sleep_studies-0014,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 in header; no change to policy content.
+sleep_studies-0015,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 with no alteration to policy content.
+sleep_studies-0016,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 with no accompanying change in policy language.
+sleep_studies-0017,sleep_studies,non_substantive,,,,7/1/26,,Update to effective date in header from 01/01/2026 to 07/01/2026 with no change to policy text.
+sleep_studies-0018,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 with no accompanying change in policy language.
+sleep_studies-0019,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 in the header/footer of the policy document.
+sleep_studies-0020,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 in the header/footer administrative text.
+sleep_studies-0021,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 in header/footer administrative text.
+sleep_studies-0022,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 in the header/footer of the policy document.
+sleep_studies-0023,sleep_studies,non_substantive,,,,7/1/26,,Change in effective date from 01/01/2026 to 07/01/2026 in the footer; no change to policy content.
+spinraza-0006,spinraza,non_substantive,,,,9/1/26,,"The change consists of a minor update to the effective date and copyright notice, with no alterations to the medical policy language or coverage criteria."
+spinraza-0010,spinraza,non_substantive,,,,9/1/26,,Update to effective date and copyright holder name in header/footer.
+spinraza-0014,spinraza,non_substantive,,,,9/1/26,,Change in effective date and minor copyright notice update.

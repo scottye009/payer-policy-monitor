@@ -1,0 +1,15 @@
+claim_group_id,payer,plan_scope,service_area,billing_setting,age_min,age_max,code_system,code,service_description,annual_claim_lines
+IMG_01,UnitedHealthcare,commercial,imaging,hospital_outpatient,0,15,,,MRI/CT hospital outpatient imaging,6200
+IMG_02,UnitedHealthcare,commercial,imaging,hospital_outpatient,16,17,,,MRI/CT hospital outpatient imaging,850
+IMG_03,UnitedHealthcare,commercial,imaging,hospital_outpatient,18,21,,,MRI/CT hospital outpatient imaging,520
+SLEEP_01,UnitedHealthcare,commercial,sleep,hospital_outpatient,0,5,CPT,95782,Pediatric polysomnography,180
+SLEEP_02,UnitedHealthcare,commercial,sleep,hospital_outpatient,0,5,CPT,95783,Pediatric polysomnography with PAP initiation,70
+SLEEP_03,UnitedHealthcare,commercial,sleep,hospital_outpatient,6,17,CPT,95810,Attended polysomnography,260
+SLEEP_04,UnitedHealthcare,commercial,sleep,hospital_outpatient,6,17,CPT,95811,Polysomnography with PAP titration,140
+SLEEP_05,UnitedHealthcare,commercial,sleep,hospital_outpatient,18,21,CPT,95810,Attended polysomnography,55
+SPIN_01,UnitedHealthcare,commercial,neurology,hospital_outpatient,0,17,HCPCS,J2326,Spinraza administration,48
+SPIN_02,UnitedHealthcare,commercial,neurology,hospital_outpatient,18,21,HCPCS,J2326,Spinraza administration,12
+ALLERGY_01,UnitedHealthcare,commercial,laboratory,facility,0,19,,,Allergen testing,900
+ALLERGY_02,UnitedHealthcare,commercial,laboratory,facility,20,21,,,Allergen testing,75
+ALLERGY_03,UnitedHealthcare,commercial,laboratory,professional,0,19,,,Allergen testing,900
+ALLERGY_04,UnitedHealthcare,commercial,laboratory,professional,20,21,,,Allergen testing,75

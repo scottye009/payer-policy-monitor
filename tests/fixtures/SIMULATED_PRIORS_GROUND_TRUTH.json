@@ -1,0 +1,88 @@
+{
+  "note": "These are controlled simulated-prior PDFs, not original archived payer artifacts. The displayed effective date is set to 01/01/2026 as a simulated historical date for testing and is not asserted as the true archived payer effective date. Current policy-history sections are intentionally retained verbatim as provenance; the policy body is reverted where the current revision history explicitly provides the prior state. Additional controlled test changes are listed below.",
+  "documents": {
+    "mri_ct_site_of_service_MP.13.19_SIMULATED.pdf": {
+      "documented_reversions": [
+        {
+          "category": "plan_applicability",
+          "prior": "Individual Exchange exclusion list omits Illinois",
+          "current": "Illinois added to exclusion list",
+          "basis": "current Policy History/Revision Information"
+        },
+        {
+          "category": "code_list",
+          "prior": "CPT 70471 absent",
+          "current": "CPT 70471 present",
+          "basis": "current Policy History/Revision Information"
+        }
+      ],
+      "injected_unlisted_substantive_change": {
+        "category": "pediatric_site_of_service",
+        "prior": "Under 16 years of age",
+        "current": "Under 18 years of age",
+        "expected_classification": "substantive",
+        "reason": "Expands pediatric age eligibility for HOPD MRI/CT; intentionally not listed in revision history to test independent change detection."
+      }
+    },
+    "spinraza_2026D0059P_SIMULATED.pdf": {
+      "documented_reversions": [
+        {
+          "category": "coverage_criteria",
+          "prior": "Zolgensma-only example(s)",
+          "current": "Itvisma added to gene-therapy examples",
+          "basis": "current Policy History/Revision Information"
+        },
+        {
+          "category": "authorization",
+          "prior": "Initial authorization will be for no more than 4 loading doses",
+          "current": "Authorization tied to FDA-approved regimen, up to 4 low-dose or 2 high-dose loading doses",
+          "basis": "current Policy History/Revision Information"
+        }
+      ],
+      "injected_nonsubstantive_wording_change": {
+        "prior": "Reauthorization will be limited to no more than 3 maintenance doses (12 months).",
+        "current": "Reauthorization will be for no more than 3 maintenance doses (12 months)",
+        "expected_classification": "wording_only_non_substantive"
+      }
+    },
+    "sleep_studies_2026T0334RR_SIMULATED.pdf": {
+      "documented_reversions": [
+        {
+          "category": "coverage_criteria",
+          "prior": "HSAT result may be negative, indeterminate, or technically inadequate",
+          "current": "technically inadequate removed from criterion",
+          "basis": "current Policy History/Revision Information"
+        },
+        {
+          "category": "wording_rule",
+          "prior": "Parasomnia ... sleep behavior suspicious of RBD",
+          "current": "... sleep behaviors or behaviors suspicious of RBD",
+          "basis": "current Policy History/Revision Information"
+        },
+        {
+          "category": "coverage_criteria",
+          "prior": "full-night PAP titration when split-night inadequate/not feasible and confirmed OSA",
+          "current": "full-night PAP titration when confirmed OSA or other sleep-disordered breathing",
+          "basis": "current Policy History/Revision Information"
+        },
+        {
+          "category": "coverage_criteria",
+          "prior": "repeat attended PSG/PAP medically necessary in listed circumstances",
+          "current": "adds requirement that attended-study criteria are met",
+          "basis": "current Policy History/Revision Information"
+        },
+        {
+          "category": "coverage_criteria",
+          "prior": "weight change or changes in cardiovascular disease",
+          "current": "cardiovascular-disease clause removed",
+          "basis": "current Policy History/Revision Information"
+        }
+      ],
+      "injected_nonsubstantive_wording_change": {
+        "prior": "Individual is a child or adolescent younger than 18 years of age; or",
+        "current": "Individual is a child or adolescent (i.e., less than 18 years of age); or",
+        "expected_classification": "wording_only_non_substantive"
+      }
+    }
+  }
+}

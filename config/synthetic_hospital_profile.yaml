@@ -1,0 +1,36 @@
+profile_name: synthetic_seattle_pediatric_hospital
+synthetic: true
+
+geography:
+  state: WA
+
+payer_scope:
+  payer: UnitedHealthcare
+  plans:
+    - commercial
+    - individual_exchange
+
+population:
+  type: pediatric
+  age_min: 0
+  age_max: 21
+
+billing_settings:
+  - hospital_outpatient
+  - inpatient
+  - facility
+  - professional
+  - pharmacy
+
+service_areas:
+  - imaging
+  - sleep
+  - neurology
+  - infusion
+  - pharmacy_drug
+  - laboratory
+  - surgery
+  - pathology
+  - cardiology
+  - oncology
+  - rehabilitation

@@ -3,4 +3,6 @@ PyMuPDF
 PyYAML
 pydantic
 beautifulsoup4
+sentence-transformers
+openpyxl
 pytest

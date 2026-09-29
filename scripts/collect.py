@@ -72,7 +72,7 @@ def fetch_and_extract(source: SourceConfig) -> FetchedDocument:
     local_path = save_raw_pdf(RAW_DIR, source.id, content)
 
     pages = extract_pages(content)
-    metadata = extract_metadata(pages)
+    metadata = extract_metadata(content, pages)
     return FetchedDocument(content_hash, local_path, pages, metadata)
 
 

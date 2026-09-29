@@ -30,7 +30,7 @@ def test_extract_pages_and_effective_date():
     assert pages[0].page_number == 1
     assert "Effective Date: January 15, 2026" in pages[0].text
 
-    metadata = extract_metadata(pages)
+    metadata = extract_metadata(pdf_bytes, pages)
     assert metadata.effective_date == "2026-01-15"
     assert metadata.publication_date is None
     assert metadata.revision_date is None
@@ -41,7 +41,7 @@ def test_extract_metadata_missing_date_stays_none():
     pdf_bytes = _build_pdf("This policy has a revision history section but no dated label.")
     pages = extract_pages(pdf_bytes)
 
-    metadata = extract_metadata(pages)
+    metadata = extract_metadata(pdf_bytes, pages)
     assert metadata.effective_date is None
     assert metadata.publication_date is None
     assert metadata.revision_date is None
@@ -52,7 +52,7 @@ def test_policy_number_without_colon():
     pdf_bytes = _build_pdf("Policy Number 2026R8021A")
     pages = extract_pages(pdf_bytes)
 
-    metadata = extract_metadata(pages)
+    metadata = extract_metadata(pdf_bytes, pages)
     assert metadata.policy_number == "2026R8021A"
 
 
@@ -68,7 +68,7 @@ def test_publication_date_from_policy_published_history_line():
     )
     pages = extract_pages(pdf_bytes)
 
-    metadata = extract_metadata(pages)
+    metadata = extract_metadata(pdf_bytes, pages)
     assert metadata.publication_date == "2026-06-01"
     # Neighboring history dates (implementation, approval) must not leak in.
     assert metadata.revision_date is None
@@ -92,7 +92,7 @@ def test_revision_date_from_policy_history_section_ignores_toc_and_uses_latest()
     )
     pages = extract_pages(pdf_bytes)
 
-    metadata = extract_metadata(pages)
+    metadata = extract_metadata(pdf_bytes, pages)
     assert metadata.revision_date == "2026-09-01"
 
 
@@ -100,7 +100,7 @@ def test_revision_date_none_when_no_history_section():
     pdf_bytes = _build_pdf("Effective Date: January 1, 2026\nNo revision history section here.")
     pages = extract_pages(pdf_bytes)
 
-    metadata = extract_metadata(pages)
+    metadata = extract_metadata(pdf_bytes, pages)
     assert metadata.revision_date is None
 
 

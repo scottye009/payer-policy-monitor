@@ -26,14 +26,14 @@ Payer policy monitoring is difficult because a newly published PDF does not nece
 mean that an actionable coverage rule changed. A reviewer needs to answer: Did the
 payer publish a new version? What changed? Was it substantive or just
 administrative/formatting? Does it apply to our geography, plan, population, or
-billing setting? How many claims might be exposed? 
+billing setting? How many claims might be exposed?
 
 This prototype separates those questions into distinct pipeline stages rather than
 asking one model to solve the entire problem end-to-end.
 
 ## 2. Architecture
 
-![Architecture](architecture.png)
+![Architecture](screenshots/architecture.png)
 
 AI interprets source evidence, but does not create the evidence. Source URLs, dates, page numbers, and exact before/after passages are retained from the deterministic document pipeline; model-generated summaries and interpretations are layered on top of them.
 
@@ -59,8 +59,13 @@ Five public UnitedHealthcare Commercial documents:
 MRI/CT, Spinraza, and Sleep Studies got the full prior/current comparison. Their
 revision histories referenced prior versions that couldn't be reliably retrieved from
 the live site, so we use clearly labeled `SIMULATED PRIOR VERSION — NOT AN ORIGINAL PAYER ARTIFACT` fixtures for those three, reverted from the current policy using the payer's own revision-history language (details: `docs/SIMULATED_PRIORS_README.md`, submission notes §1).
+Allergen Testing and the bulletin were collected but not run through change detection:
+Allergen Testing has no Policy History/revision-date section at all, so there's no
+documented revision to revert into a simulated prior.
+The bulletin itself is a periodic announcement, not a versioned policy, so
+prior/current comparison doesn't apply to it the same way.
 
-## 4. How It Works
+## 4. How It Works & Example Ouputs
 
 **Collection** is deterministic: HTTP retrieval → PDF validation → hash the exact
 bytes → page-level text extraction → explicit metadata only. Four date concepts
@@ -68,23 +73,53 @@ bytes → page-level text extraction → explicit metadata only. Four date conce
 than collapsed into one — see submission notes §2 for how missing/conflicting dates
 are handled.
 
+![Extraction example — source PDF alongside the exact extracted text/metadata](screenshots/extraction-example.png)
+
 **Change detection** is a three-stage hybrid, not one LLM call over the whole
 document: deterministic diffing discovers every textual difference (favoring recall);
 a local `sentence-transformers/all-mpnet-base-v2` model aligns which prior passage
-corresponds to which current one when a block is ambiguous — it never decides
-substantive-ness, and high similarity never suppresses a candidate ("under 16" vs.
+corresponds to which current one when a block is ambiguous ("under 16" vs.
 "under 18" score 0.94+ similar and still surface); `Qwen/Qwen3-235B-A22B-Instruct-2507`
 classifies each candidate as `substantive`/`non_substantive`/`uncertain` from the exact
 before/after text and extracts the structured fields relevance needs, in the same
-call. The payer's revision-history section is checked as corroborating evidence, never
-as an exhaustive list — a deliberately unlisted MRI/CT age-threshold change is still
-found and correctly classified.
+call. The payer's revision-history section is checked as corroborating evidence, and a deliberately unlisted MRI/CT age-threshold change is still found and correctly classified.
 
 > **Result: 9/9 recall** against the hand-built ground truth for every payer-documented
 > change across the three test policies — plus the one deliberately *undocumented*
 > change (found independent of revision history) and exactly one identified false
-> positive, traced to a fixture-construction artifact rather than the detector. Full
-> breakdown: submission notes §4.
+> positive, traced to a fixture-construction artifact rather than the detector.
+
+Full breakdown, checked against `tests/fixtures/SIMULATED_PRIORS_GROUND_TRUTH.json`
+and `data/review/final_review_queue.json`:
+
+- **9/9 documented changes correctly classified `substantive`** — 2 in MRI/CT
+  (Individual Exchange Illinois exclusion, CPT 70471 added), 2 in Spinraza (Itvisma
+  added to gene-therapy examples, loading-dose authorization language), 5 in Sleep
+  Studies (technically-inadequate criterion removed, RBD wording, PAP-titration
+  criterion broadened, repeat-testing clause added, cardiovascular-disease clause
+  removed).
+- **1 additional undocumented change found**: the MRI/CT age threshold (Under 16 →
+  Under 18) was deliberately left out of the simulated prior's revision history to
+  test whether detection depends on it — it was still found and classified
+  `substantive`, `revision_history_match: false`. Reported separately since there's no
+  ground-truth entry for it to "recall" against.
+- **1 false positive**: `spinraza-0002` ("Changed 'On' to 'One of the following:'...")
+  is classified `substantive` with no corresponding ground-truth entry at all. Its
+  prior-version text contains a bare fragment — `a; and` — that isn't valid English on
+  its own, pointing to a truncation artifact in how that simulated-prior fixture was
+  built rather than a detector bug. Left visible rather than tuned around.
+- **Policy History corroboration under-performs classification recall**: only 4 of the
+  9 documented changes actually got `revision_history_match: true`. Root cause: Sleep
+  Studies nests four separate changes under sub-headings ("Other Conditions",
+  "Attended PAP Titration", "Attended Repeat Testing") the history splitter doesn't
+  recognize as boundaries, so they collapse into one 3,000+ character history entry.
+  Semantic similarity against that entry is still strong (0.66-0.76) for the missed
+  candidates, but the lexical-overlap half of the dual similarity+lexical threshold —
+  added earlier to kill a real false-positive corroboration match — drops to 0.04-0.09
+  because a short quote gets diluted against a much longer, multi-topic blob.
+  Classification succeeds independently from the before/after text either way, so this
+  doesn't cost recall, but the reviewer-facing "Policy History confirms this" citation
+  is missing on roughly half the cases where it should be there. Noted, not fixed.
 
 **Relevance** runs only on substantive/uncertain candidates, comparing structured
 fields (`service_area`, `billing_setting`, `age`, `codes`, `states`, `plan_scope`) against a synthetic hospital profile
@@ -97,14 +132,99 @@ using a strict matching cascade against `data/synthetic_claim_volume.csv` (expli
 plan → explicit code → newly-affected age band → service-area proxy, each clearly
 labeled) — never a dollar estimate, never a silent fallback to a broader number.
 
+Three full rows from `data/review/final_review_queue.json`, chosen to show three
+different outcomes rather than the flashiest one — every field, nothing trimmed:
+
+**`mri_ct_site_of_service-0002`** — substantive, but irrelevant to this hospital
+
+
+| Field                          | Value                                                                                                                                                                                                                        |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| classification                 | `substantive`                                                                                                                                                                                                                |
+| change_type / section          | `modified` / Application                                                                                                                                                                                                     |
+| before_text                    | "UnitedHealthcare Individual Exchange<br>This Medical Policy applies to Individual Exchange benefit plans in all states, except for Maryland, Massachusetts, Texas, and Wisconsin."                                          |
+| after_text                     | "UnitedHealthcare Individual Exchange<br>This Medical Policy applies to Individual Exchange benefit plans in all states, except for Illinois, Maryland, Massachusetts, Texas, and Wisconsin."                                |
+| summary                        | The policy now explicitly excludes Illinois from the states where this Medical Policy applies for Individual Exchange plans, whereas it previously did not mention Illinois as an exception.                                 |
+| reason                         | The addition of Illinois to the list of excluded states changes the geographic applicability of the policy, which affects coverage determinations and billing requirements for services in that state.                       |
+| why_it_may_matter              | Pediatric hospital reviewers should be aware that MRI and CT scan coverage rules under Individual Exchange plans may differ in Illinois compared to other states, potentially affecting authorization and billing processes. |
+| billing_setting / service_area | `hospital_outpatient` / `imaging`                                                                                                                                                                                            |
+| age_min / age_max              | *(null)* / *(null)*                                                                                                                                                                                                          |
+| codes                          | *(none)*                                                                                                                                                                                                                     |
+| states                         | `IL`                                                                                                                                                                                                                         |
+| plan_scope                     | `individual_exchange`                                                                                                                                                                                                        |
+| additional_data_needed         | `site_of_service`, `plan_product`                                                                                                                                                                                            |
+| revision_history_match         | `true` — "Application / Individual Exchange / Added language to indicate this Medical Policy does not apply to Individual Exchange benefit plans in the state of Illinois"                                                  |
+| confidence                     | 1.0                                                                                                                                                                                                                          |
+| effective_date                 | 2026-09-01                                                                                                                                                                                                                   |
+| prior/current policy_number    | MP.13.19 → MP.13.20                                                                                                                                                                                                         |
+| source_url                     | uhcprovider.com/.../mri-ct-scan-site-of-service.pdf                                                                                                                                                                          |
+| relevance                      | `irrelevant`                                                                                                                                                                                                                 |
+| relevance_reason               | passage explicitly lists an exclusion of`['IL']` that does not include the hospital's state (WA); this specific change doesn't affect the hospital.                                                                          |
+| potential_annual_claim_lines   | *(null)*                                                                                                                                                                                                                     |
+| impact_note                    | Not estimated: change assessed as irrelevant to the hospital profile.                                                                                                                                                        |
+
+**`mri_ct_site_of_service-0005`** — substantive, relevant, but no synthetic volume to size it
+
+
+| Field                          | Value                                                                                                                                                                                                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| classification                 | `substantive`                                                                                                                                                                                                                                                             |
+| change_type / section          | `added` / Applicable Codes                                                                                                                                                                                                                                                |
+| before_text                    | *(null — this is a pure addition, nothing to diff against)*                                                                                                                                                                                                              |
+| after_text                     | "70471   Computed tomographic angiography (CTA), head and neck, with contrast material(s), including noncontrast images, when performed, and image postprocessing"                                                                                                        |
+| summary                        | Added CPT code 70471 for computed tomographic angiography (CTA) of the head and neck with contrast, including noncontrast images when performed and image postprocessing.                                                                                                 |
+| reason                         | The addition of a new CPT code to the Applicable Codes section explicitly expands the list of billable services under this policy, which affects coverage determination, billing, and potentially reimbursement for this specific imaging service.                        |
+| why_it_may_matter              | Pediatric hospital reviewers should be aware that CPT 70471 is now formally included in the policy for MRI/CT site-of-service rules, which may affect authorization requirements and billing practices for head and neck CTA studies in children if clinically indicated. |
+| billing_setting / service_area | `hospital_outpatient` / `imaging`                                                                                                                                                                                                                                         |
+| age_min / age_max              | *(null)* / *(null)*                                                                                                                                                                                                                                                       |
+| codes                          | `70471`                                                                                                                                                                                                                                                                   |
+| states / plan_scope            | *(none)* / *(none)*                                                                                                                                                                                                                                                       |
+| additional_data_needed         | `clinical_indication`, `site_of_service`                                                                                                                                                                                                                                  |
+| revision_history_match         | `true` — "Applicable Codes / Computed Tomography / Added CPT code 70471"                                                                                                                                                                                                 |
+| confidence                     | 1.0                                                                                                                                                                                                                                                                       |
+| effective_date                 | 2026-09-01                                                                                                                                                                                                                                                                |
+| prior/current policy_number    | MP.13.19 → MP.13.20                                                                                                                                                                                                                                                      |
+| source_url                     | uhcprovider.com/.../mri-ct-scan-site-of-service.pdf                                                                                                                                                                                                                       |
+| relevance                      | `relevant`                                                                                                                                                                                                                                                                |
+| relevance_reason               | service_area 'imaging' and billing_setting 'hospital_outpatient' both fall within the hospital's profile, with no conflicting age, plan, or geography signal.                                                                                                             |
+| potential_annual_claim_lines   | *(null)*                                                                                                                                                                                                                                                                  |
+| impact_note                    | No synthetic claim-volume row exists for code(s)`['70471']`; code-specific volume is unavailable, and broader service-area volume is not used as a substitute.                                                                                                            |
+
+**`mri_ct_site_of_service-0001`** — filtered out before relevance/impact ever run
+
+
+| Field                                                | Value                                                                                                                                                                                                                  |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| classification                                       | `non_substantive`                                                                                                                                                                                                      |
+| change_type / section                                | `modified` / *(none — header block, not a policy section)*                                                                                                                                                            |
+| before_text                                          | "Policy Number: MP.13.19 / Effective Date: January 1, 2026"                                                                                                                                                            |
+| after_text                                           | "Policy Number: MP.13.20 / Effective Date: September 1, 2026"                                                                                                                                                          |
+| summary                                              | Update to policy number and effective date.                                                                                                                                                                            |
+| reason                                               | The change involves only the policy number (from MP.13.19 to MP.13.20) and the effective date (from January 1, 2026 to September 1, 2026), with no modifications to the policy language or clinical coverage criteria. |
+| why_it_may_matter                                    | *(empty — non_substantive candidates get no relevance framing)*                                                                                                                                                       |
+| billing_setting / service_area                       | `unknown` / `unknown`                                                                                                                                                                                                  |
+| codes / states / plan_scope / additional_data_needed | *(none)*                                                                                                                                                                                                               |
+| revision_history_match                               | `true` — "Date / Summary of Changes / 09/01/2026"                                                                                                                                                                     |
+| confidence                                           | 1.0                                                                                                                                                                                                                    |
+| effective_date                                       | 2026-09-01                                                                                                                                                                                                             |
+| prior/current policy_number                          | MP.13.19 → MP.13.20                                                                                                                                                                                                   |
+| source_url                                           | uhcprovider.com/.../mri-ct-scan-site-of-service.pdf                                                                                                                                                                    |
+| relevance / relevance_reason                         | *(null / null — never assessed)*                                                                                                                                                                                      |
+| potential_annual_claim_lines / impact_note           | *(null / null — never estimated)*                                                                                                                                                                                     |
+
+The middle row is the most interesting: a real coverage expansion the system correctly
+flags as relevant, where it explicitly refuses to produce a number rather than fall
+back to a broader, less precise estimate. All three are live output, unedited, from
+`data/review/final_review_queue.json` and browsable in the app below.
+
 **The reviewer app** (`app.py`, `streamlit run app.py`) is a thin layer over
 `data/review/final_review_queue.json`: browse/filter the queue, inspect exact
 before/after evidence and the source PDF, and record a `Relevant`/`Irrelevant`/`Needs investigation` decision — kept separate from the automated `relevance` field.
 Substantive items with automated relevance `relevant`/`needs_investigation` are
 required before the completed review can be submitted.
 
-![Reviewer app — queue, sorted by potential claim exposure](app-1.png)
-![Reviewer app — the MRI age-threshold item open](app-2.png)
+![Reviewer app — queue, sorted by potential claim exposure](screenshots/app-1.png)
+![Reviewer app — the MRI age-threshold item open](screenshots/app-2.png)
 *The same age-threshold example from the callout above, open in `app.py`: summary,
 why it may matter, the 940-claim-line synthetic impact estimate, the exact
 before/after evidence side by side, and the source PDF tab.*
@@ -131,6 +251,11 @@ before/after evidence side by side, and the source PDF tab.*
 
 - Historical payer PDFs were unavailable, requiring clearly labeled simulated priors,
   which can themselves introduce extraction artifacts (submission notes §4).
+- Policy History corroboration under-matches on documents whose history section
+  nests multiple changes under sub-headings the splitter doesn't recognize (e.g.
+  Sleep Studies) — only 4/9 ground-truth changes got `revision_history_match: true`,
+  even though all 9 were still correctly classified `substantive` from the text alone.
+  Noted, not yet fixed (submission notes §4).
 - The synthetic hospital profile and claim volumes are illustrative, not Seattle
   Children's actual contracts, claims, or plan mix.
 - No dollar amounts are estimated anywhere in the pipeline, by design.

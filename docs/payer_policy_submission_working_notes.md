@@ -1,246 +1,95 @@
 # Submission Notes
 
-For the full implementation narrative, see`README.md`; for exact reproduction commands, see `docs/RUNNING_GUIDE.md`.
+## Policies selected
 
-## 1. Policies selected and source links
+I focused on UnitedHealthcare Commercial policies. I collected five public documents: MRI and CT Scan – Site of Service, Spinraza, Sleep Studies, Allergen Testing Policy, and the August 2026 Commercial Reimbursement Policy Update Bulletin.
 
-I focused on UnitedHealthcare Commercial policies and selected examples that represent
-different types of operational change:
+For the prior/current comparison, I used MRI/CT, Spinraza, and Sleep Studies. All three referenced prior policy versions in their revision history, but I could not reliably find those older PDFs on the live UHC site. Because the assignment allowed a simulated prior when historical versions are unavailable, I created clearly labeled simulated prior versions for those three policies.
 
-- **MRI and CT Scan – Site of Service**
+For the simulated priors, I mainly reverted changes explicitly described in UHC's revision history. I also intentionally added a substantive change that was not listed in the revision history, plus a few wording-only changes. The goal was to make sure the change detector was actually comparing the policy language rather than simply repeating the payer's own change summary.
+
+The five source documents were:
+
+- MRI and CT Scan – Site of Service:
   https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/mri-ct-scan-site-of-service.pdf
-- **Spinraza (Nusinersen)**
+- Spinraza (Nusinersen):
   https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/spinraza-nusinersen.pdf
-- **Sleep Studies**
+- Sleep Studies:
   https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/sleep-studies.pdf
-- **Allergen Testing Policy, Professional and Facility**
+- Allergen Testing Policy, Professional and Facility:
   https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-reimbursement/COMM-Allergen-Testing-Policy.pdf
-- **August 2026 Commercial Reimbursement Policy Update Bulletin**
+- August 2026 Commercial Reimbursement Policy Update Bulletin:
   https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-reimbursement/rpub/UHC-COMM-RPUB-August-2026.pdf
 
-MRI/CT, Spinraza, and Sleep Studies were used for detailed prior/current comparison.
-Their revision histories referenced earlier versions, but those historical PDFs were
-not reliably available online, so I created clearly labeled simulated prior versions
-for evaluation.
+## How I check for updates and detect changes
 
-## 2. How changes are detected, including missing or conflicting dates
+I thought of this as two separate problems: first, how do I know a payer published something new, and second, what actually changed in the policy?
 
-The workflow separates document monitoring from semantic change detection.
+For the first part, the collection process records the source URL, retrieval time, policy number, PDF hash, and dates available from both the PDF and the UHC policy index. In a daily version of this system, I would regularly poll those payer index pages. If the site's publication/version information changes, I would download the document and compare its hash/version with the one already stored. If it is new, that would trigger the comparison pipeline.
 
-For monitoring, the payer index page is polled for signals such as `Last Published`,
-while the downloaded PDF is stored with its hash, retrieval time, policy number,
-effective date, and other extracted metadata. A changed publication signal or new
-artifact triggers comparison with the stored prior version.
+For the second part, I first use a deterministic text diff so I do not miss differences just because they look semantically similar. I then use MPNet to help align corresponding passages between versions. Qwen is used after that to decide whether the difference is actually substantive, non-substantive, or uncertain, and to extract a few structured fields that I need later for relevance.
 
-For actual policy changes, I use:
+I use the payer's Policy History as supporting evidence, but not as the source of truth. This mattered in the MRI example because the simulated prior contains an age change from under 16 to under 18 that I intentionally left out of the revision history. The detector still found it.
 
-```text
-text/structural comparison
-    →
-MPNet semantic passage alignment
-    →
-Qwen semantic adjudication
-    →
-substantive / non-substantive / uncertain
-```
+I also keep the exact before/after passage, page, section, source URL, and dates with every result. The model is interpreting the source text, not generating the evidence itself.
 
-This is important because a highly similar sentence can still contain a material
-change such as an age threshold, code, exclusion, dosage, or site-of-service rule.
+## Dates
 
-Dates are preserved separately rather than forced into one field. For example, a
-payer's website `Last Published` date may differ from the publication or effective
-date shown in the PDF. In the prototype, those values retain their source/provenance;
-missing dates remain `null`, and conflicting dates are surfaced rather than silently
-reconciled. A bulletin can also provide an effective date that is not available
-directly from the policy PDF.
+Dates were a little more complicated than I expected because UHC exposes several different concepts. There can be an effective date inside the PDF, a revision or publication date, a `Last Published` date on the payer's website, and the time when I retrieved the document.
 
-## 3. How pediatric / hospital relevance is determined
+I decided not to collapse those into a single date because they mean different things. If a date is missing, I leave it missing rather than guessing it from another field. If a date comes from another official source, such as the reimbursement bulletin, I keep that provenance with it.
 
-After substantive changes are identified, they are compared with a clearly labeled
-synthetic pediatric-hospital profile representing Washington geography, pediatric
-services, HOPD/facility/professional billing, and relevant clinical service lines.
+One example was the Allergen Testing policy, where the policy PDF itself did not
+provide the effective date I needed, but the official UHC reimbursement bulletin
+did. I kept that date with its bulletin provenance rather than treating it as if
+it came from the policy PDF.
 
-Relevance uses the most specific evidence available:
+In a production monitor, I would probably also flag unusual disagreements between these date fields and automatically re-check the source.
 
-- codes, when the changed language contains CPT/HCPCS codes;
-- age, when the policy changes an age threshold;
-- state / plan applicability, when geography or product scope is explicit;
-- billing or site-of-service language, such as hospital outpatient vs. inpatient;
-- service area and policy language, when no usable billing code is present.
+## How I determine relevance
 
-Many meaningful changes, such as Spinraza authorization criteria or Sleep Studies medical-necessity language, cannot be identified from a CPT code alone.
+For this part, I created a small synthetic pediatric hospital profile with Washington geography, pediatric ages, hospital outpatient, facility and professional billing, UHC plan scope, and several relevant service areas.
 
-The output is deliberately conservative:
+For each substantive change, I use the most specific information available. If there is a CPT or HCPCS code, I use that. If there is an age threshold, state, plan, or billing-setting change, I compare that directly with the hospital profile. When there is no useful code, I use the policy language and the service area instead. This is important for things like Spinraza authorization criteria or Sleep Studies medical-necessity changes, which can matter even when there is no new CPT code.
 
-- `relevant` when there is a clear match,
-- `irrelevant` when there is a clear mismatch,
-- `needs_investigation` when applicability cannot be established confidently.
+The output is `relevant`, `irrelevant`, or `needs_investigation`. I kept the third option because there are cases where the policy alone is not enough to know whether a rule applies to a particular contract or benefit plan.
 
-For example, the MRI policy's change from under 16 to under 18 is relevant to a
-pediatric HOPD setting. By contrast, an Individual Exchange change specifically
-excluding Illinois is not relevant to a Washington hospital.
+One example is the MRI Individual Exchange change that added Illinois to an exclusion list. The change itself is substantive, but it is irrelevant to the synthetic Washington hospital. Earlier in development I actually sent this to `needs_investigation` because I had captured the state but not the fact that it was an exclusion. I corrected the relevance logic after reviewing the exact passage.
 
-The prototype profile is synthetic and does not establish that a policy actually
-applies to Seattle Children's contracts or benefit products.
+## Impact
 
-## 4. Performance, false positive, and an ambiguous case
+I used synthetic annual claim volumes for quantifying impact. The goal was to estimate the population that could potentially be affected without pretending the number was more precise than the available data.
 
-Change detection was evaluated against a hand-built ground truth for the three
-simulated-prior pairs (`tests/fixtures/SIMULATED_PRIORS_GROUND_TRUTH.json`, read only
-by QC tooling, never by production code). Of the **9** changes the payer's own Policy
-History/Revision Information section documents (2 in MRI/CT, 2 in Spinraza, 5 in Sleep
-Studies), **all 9** were correctly found and classified `substantive` — **recall
-9/9**. A 10th ground-truth item — the MRI/CT age threshold (Under 16 → Under 18) — was
-*deliberately not* listed in Policy History, specifically to test whether detection
-depends on the history section; it was also correctly found and classified
-`substantive`, `revision_history_match: false`. It's reported separately from the 9/9
-figure rather than folded into it, since there's no documented entry for it to have
-"recalled" against — it's evidence that detection works independently of Policy
-History, not a recall data point.
+For example, when the MRI age threshold changes from under 16 to under 18, I count only the synthetic volume for ages 16–17 because that is the newly affected group. For the addition of CPT 70471, I do not have code-specific synthetic volume, so I return no estimate rather than using all imaging claims as a substitute.
 
-**One false positive remains**, found by cross-checking `data/review/
-final_review_queue.json` against the ground truth: candidate `spinraza-0002`
-("Changed 'On' to 'One of the following:'...") is classified `substantive` but has no
-corresponding entry in the ground truth at all, positive or negative. Its underlying
-prior-version text contains a bare fragment — `a; and` — that isn't valid English on
-its own, strongly suggesting a truncation artifact from constructing the
-simulated-prior fixture rather than a deliberate test case. It was not tuned around
-and remains visible in the review queue for a human to see.
+For broader clinical changes, such as Sleep Studies criteria, the claim data cannot tell me which patients actually meet the new clinical requirement. In those cases I use the matching service volume only as an upper-bound proxy and say what additional information would be needed for a better estimate.
 
-A second, now-fixed, false-positive source came from the simulated-prior PDF
-generation process itself: the generated PDFs did not always preserve text objects in
-natural reading order, so extraction initially combined unrelated content and footer
-text, creating misleading change candidates. I fixed this upstream by switching to
-position-sorted PDF extraction and reran QC.
+## QC and issues I encountered
 
-Two of the ground truth's non-substantive wording-only test items (Spinraza's
-"limited to"→"for"; Sleep Studies' age phrasing) sit in the same unmarked bullet-list
-paragraph as a genuinely substantive edit, so their containing candidate
-(`spinraza-0007`, `sleep_studies-0002`) is correctly classified substantive as a
-whole. That's a known paragraph-granularity limitation, not a separate false positive.
+I created a small hand-built ground truth from the simulated priors to check the detector. Across the three policies, all 9 changes explicitly described in the payer's revision history were found and classified as substantive. The additional MRI age change that was intentionally not listed in the revision history was also found.
 
-I also intentionally preserve ambiguous relevance cases rather than forcing a
-decision. During development, a state-specific applicability change was initially
-sent to `needs_investigation` because the structured representation captured the
-state but not the exclusion polarity. After reviewing the source language, the rule
-was refined so an explicit Illinois-only exclusion is correctly `irrelevant` to the
-Washington synthetic hospital.
+I also noticed that classification recall (9/9) and history corroboration are not the same thing: only 4 of those 9 changes actually came back with `revision_history_match: true`. Sleep Studies is the main culprit — it groups several separate changes under one large history entry, so the text-overlap check gets diluted even when the semantic match is strong. Classification still works fine without that corroboration, but it means the "Policy History confirms this" citation is missing on cases where it should be there. I haven't fixed the matching logic yet, just noted it.
 
-The reviewer application still provides `Needs investigation` as a first-class human
-decision for cases where policy or contract applicability truly remains unclear.
+One other issue I ran into was PDF extraction. The simulated PDFs did not always store text objects in natural reading order, so some extracted text was being combined incorrectly and producing misleading differences. PDF processing was new to me, so I spent some time tracing where the problem was actually coming from. I eventually fixed it upstream by using position-sorted text extraction rather than trying to compensate for it with the LLM.
 
-## 5. AI use, confidentiality, and output validation
+There is still one known false positive in the Spinraza example that appears to come from malformed text in the simulated prior. I left it visible instead of tuning the detector specifically around that fixture, since a human reviewer can see the evidence and decide it is not meaningful.
 
-I didn't use Ember AI in this project. AI tools were used selectively during development, but the system design and
-evaluation decisions were made manually.
+## AI use and confidentiality
 
-I designed the overall data model and pipeline structure, including the document
-schema, change-record schema, relevance logic, synthetic hospital profile,
-claim-impact approach, and the prompts used for policy-change adjudication.
+I did not use Ember AI.
 
-**Claude Code** was used primarily as a coding assistant for implementation,
-debugging, code review, testing, and repository polish.
+I designed the data model, schemas, relevance and impact logic, evaluation setup, and prompts. Claude Code was used as a coding assistant for implementation, debugging, testing, code review, and repository cleanup. GPT helped generate the simulated prior PDFs based on the changes I specified. Qwen3-235B-A22B-Instruct is the model used by the actual change-detection pipeline.
 
-**GPT** was used to help generate the clearly labeled simulated prior policy documents. The simulated priors were
-manually specified and reviewed: documented revision-history changes were
-intentionally reverted, and selected additional substantive/non-substantive changes
-were introduced to support controlled evaluation.
+Everything used in the prototype is either public or synthetic: public UHC policies, simulated prior policies, a synthetic hospital profile, and synthetic claim volumes. I also do not treat model output as the final answer. The app keeps the exact source passages available for review, and the final relevance decision is still made by a human reviewer.
 
-At runtime, **Qwen3-235B-A22B-Instruct-2507** is used for semantic change adjudication
-and structured extraction.
+## What I would build next
 
-For confidentiality, the prototype uses only:
+The next step would be to make the collection process continuous and support more payers. I would create lightweight source adapters for UHC, Premera, Regence, and other payer sites, monitor them on a schedule, and store each real policy version as it appears.
 
-- public payer policy documents,
-- clearly labeled simulated prior policies,
-- a synthetic hospital profile, and
-- synthetic claim volumes.
+A new or updated policy would automatically trigger the same comparison pipeline. The synthetic hospital profile would eventually be replaced with the organization's real payer products, service lines, sites of care, and billing settings, and synthetic claim volumes could be replaced by actual utilization data.
 
-No patient data, Seattle Children's claims, contracts, or other confidential hospital
-information were provided to these models.
+I would keep one shared review queue across payers rather than separate workflows for each payer. New changes could then be prioritized based on relevance, effective date, potential exposure, and uncertainty. I would also add notifications for newly prioritized items so the
+reviewer does not need to keep checking the dashboard, while keeping the app as
+the place where evidence and final decisions are recorded.
 
-Model output is not treated as source truth. Validation includes deterministic
-preservation of exact before/after policy text, page/source metadata, controlled QC
-against the simulated ground truth, manual review of detected changes, and final
-human reviewer approval in the application.
-
-The model interprets evidence; it does not create the evidence supporting the alert.
-
-## 6. How I would extend this for daily multi-payer monitoring
-
-The next step would be to turn the current batch prototype into a scheduled,
-event-driven monitoring service.
-
-```text
-UHC / Premera / Regence policy sources
-        ↓
-daily source monitoring
-        ↓
-new or updated document detected
-        ↓
-store immutable policy version
-        ↓
-compare with true historical version
-        ↓
-semantic change detection
-        ↓
-match against organization profile
-        ↓
-estimate operational exposure
-        ↓
-prioritized human review queue / alert
-```
-
-Each payer would have a lightweight source adapter for its index pages, update
-bulletins, and document structure, while the downstream change/relevance workflow
-remains shared.
-
-In production, the synthetic profile would be replaced by an organization-maintained
-profile describing: payer products and contracts, geography, facilities and sites of
-care, professional/facility billing, service lines, and relevant codes and workflows.
-Synthetic claim volumes would similarly be replaced with real utilization data, and
-authorization/clinical data could be incorporated when claims alone cannot determine
-impact.
-
-The queue should be update-driven rather than payer-by-payer: every newly detected
-policy change enters the same review pipeline and can be prioritized across payers
-based on factors such as: likely organizational relevance, effective-date proximity,
-site-of-care or authorization impact, potential claim exposure, and model uncertainty.
-
-The result would be a continuous organization-level policy monitoring workflow rather
-than a set of separate manual payer reviews.
-
-### Trying other models, and possibly fine-tuning
-
-The prototype uses one general-purpose instruct model
-(`Qwen/Qwen3-235B-A22B-Instruct-2507`) for every adjudication call. Before relying on
-this for daily monitoring, I'd want to benchmark alternatives on a much larger,
-held-out set of real policy changes rather than assume the current model is the best
-fit:
-
-- Other open-weight instruct models of similar or larger scale, to see whether
-  accuracy on this specific task (classifying substantive vs. non-substantive payer
-  policy language) actually differs meaningfully from Qwen's, and at what cost/latency
-  tradeoff.
-- A smaller model **fine-tuned** on a curated set of before/after passages labeled
-  substantive/non_substantive/uncertain (built up from QC over time, per the point
-  below). A narrow, fine-tuned model is often cheaper, faster, and more consistent on
-  one well-defined classification task than a large general-purpose model prompted
-  for it — worth trying once there's enough labeled data to fine-tune on responsibly.
-- **Enterprise-grade proprietary model APIs** (e.g. Azure OpenAI, AWS Bedrock, or a
-  vendor offering under a signed data-processing/BAA-style agreement) if their
-  accuracy on this task is meaningfully better and the organization needs to feed the
-  model more sensitive context later (e.g. real claims or eligibility data at the
-  impact-estimation stage, which this prototype never does). The choice would be
-  driven by measured accuracy and the actual data-sensitivity requirements of that
-  stage, not by which model is newest.
-
-### A larger evaluation set before deployment
-
-Current QC is manual and small: a hand-built ground truth over three documents and 11
-substantive/uncertain candidates (§4). Before deployment I would build a much larger, more
-representative evaluation set (many more documents, multiple payers, and eventually
-real rather than simulated prior/current pairs), track precision/recall/false-positive
-rate on it over time, and re-run it automatically whenever the prompt, alignment, or
-matching logic changes, rather than re-verifying a handful of examples by hand after
-every change, which is what this prototype still does today.
+Before production use, I would build a much larger evaluation set using real historical policy pairs across multiple payers and use reviewer decisions to continuously measure and improve the change-detection and relevance logic.

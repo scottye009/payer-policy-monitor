@@ -18,6 +18,7 @@ public payer documents and synthetic hospital/claim data.
 - **`docs/payer_policy_submission_working_notes.md`** — answers to the
   submission prompts.
 - **`docs/RUNNING_GUIDE.md`** — reproduction commands.
+- Loom walkthrough & demo: https://www.loom.com/share/3e4c4c8d621d4ab5aa6447da46424f47
 
 ## 1. Problem
 

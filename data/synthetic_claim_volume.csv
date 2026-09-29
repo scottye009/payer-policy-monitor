@@ -9,6 +9,13 @@ SLEEP_04,UnitedHealthcare,commercial,sleep,hospital_outpatient,6,17,CPT,95811,Po
 SLEEP_05,UnitedHealthcare,commercial,sleep,hospital_outpatient,18,21,CPT,95810,Attended polysomnography,55
 SPIN_01,UnitedHealthcare,commercial,neurology,hospital_outpatient,0,17,HCPCS,J2326,Spinraza administration,48
 SPIN_02,UnitedHealthcare,commercial,neurology,hospital_outpatient,18,21,HCPCS,J2326,Spinraza administration,12
+SPIN_03,UnitedHealthcare,commercial,pharmacy_drug,hospital_outpatient,0,17,HCPCS,J2326,Spinraza administration (pharmacy/drug categorization),48
+SPIN_04,UnitedHealthcare,commercial,pharmacy_drug,hospital_outpatient,18,21,HCPCS,J2326,Spinraza administration (pharmacy/drug categorization),12
+SPIN_05,UnitedHealthcare,commercial,pharmacy_drug,professional,0,17,HCPCS,J2326,Spinraza administration (professional billing),30
+SPIN_06,UnitedHealthcare,commercial,pharmacy_drug,professional,18,21,HCPCS,J2326,Spinraza administration (professional billing),8
+IMG_04,UnitedHealthcare,individual_exchange,imaging,hospital_outpatient,0,15,,,MRI/CT hospital outpatient imaging (Individual Exchange),600
+IMG_05,UnitedHealthcare,individual_exchange,imaging,hospital_outpatient,16,17,,,MRI/CT hospital outpatient imaging (Individual Exchange),90
+IMG_06,UnitedHealthcare,individual_exchange,imaging,hospital_outpatient,18,21,,,MRI/CT hospital outpatient imaging (Individual Exchange),55
 ALLERGY_01,UnitedHealthcare,commercial,laboratory,facility,0,19,,,Allergen testing,900
 ALLERGY_02,UnitedHealthcare,commercial,laboratory,facility,20,21,,,Allergen testing,75
 ALLERGY_03,UnitedHealthcare,commercial,laboratory,professional,0,19,,,Allergen testing,900

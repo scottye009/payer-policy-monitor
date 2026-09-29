@@ -5,4 +5,5 @@ pydantic
 beautifulsoup4
 sentence-transformers
 openpyxl
+streamlit
 pytest

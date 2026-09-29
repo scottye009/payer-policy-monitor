@@ -11,7 +11,9 @@ from payer_policy.models import ChangeRecord, PolicyDocument
 
 PROCESSED_DIR = ROOT / "data" / "processed"
 PRIOR_DIR = ROOT / "data" / "simulated_prior_processed"
-OUTPUT_DIR = ROOT / "data" / "change_results"
+# data/change_results/ holds the committed historical QC run and is never
+# overwritten by later pipeline changes; new runs land here instead.
+OUTPUT_DIR = ROOT / "data" / "review"
 
 # (prior document id, current document id) -- both read from their already
 # processed JSON; no PDF is reopened.

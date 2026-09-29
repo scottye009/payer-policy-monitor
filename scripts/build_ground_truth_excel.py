@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Flatten tests/fixtures/SIMULATED_PRIORS_GROUND_TRUTH.json into a plain,
-readable spreadsheet in the same folder. Test-fixture-only; not used by
-src/payer_policy/change.py."""
+"""Flatten tests/fixtures/SIMULATED_PRIORS_GROUND_TRUTH.json into a readable spreadsheet"""
 import json
 import sys
 from pathlib import Path

@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Build a human-readable rendering of the Milestone 2 change-detection
-output for manual QC: one tab per prior/current policy pair, each holding
-the same candidates as *_changes.json / review_queue.json, just formatted
-for a person to read."""
+"""Build a human-readable rendering of the output for manual QC"""
 import json
 import sys
 from pathlib import Path

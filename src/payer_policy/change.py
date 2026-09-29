@@ -346,6 +346,8 @@ def detect_changes(prior: PolicyDocument, current: PolicyDocument, *, adjudicate
             after_text=candidate.after.raw_text if candidate.after else None,
             section=section,
             revision_history_evidence=evidence,
+            document_title=current.title,
+            document_type=current.document_type,
         )
 
         records.append(
@@ -355,6 +357,8 @@ def detect_changes(prior: PolicyDocument, current: PolicyDocument, *, adjudicate
                 prior_policy_number=prior.policy_number,
                 current_policy_number=current.policy_number,
                 prior_is_simulated=prior.is_simulated,
+                effective_date=current.effective_date,
+                source_url=current.source_url,
                 change_type=candidate.change_type,
                 before_text=candidate.before.raw_text if candidate.before else None,
                 after_text=candidate.after.raw_text if candidate.after else None,
@@ -369,6 +373,15 @@ def detect_changes(prior: PolicyDocument, current: PolicyDocument, *, adjudicate
                 summary=adjudication.summary,
                 reason=adjudication.reason,
                 confidence=adjudication.confidence,
+                why_it_may_matter=adjudication.why_it_may_matter,
+                billing_setting=adjudication.billing_setting,
+                service_area=adjudication.service_area,
+                age_min=adjudication.age_min,
+                age_max=adjudication.age_max,
+                codes=adjudication.codes,
+                states=adjudication.states,
+                plan_scope=adjudication.plan_scope,
+                additional_data_needed=adjudication.additional_data_needed,
                 review_status="pending",
             )
         )

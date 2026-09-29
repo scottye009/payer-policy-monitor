@@ -1,171 +1,169 @@
-# Payer Policy Review Prototype
+# Payer Policy Monitor
 
-Prototype for converting UnitedHealthcare policy updates into an
-evidence-backed review queue for a synthetic pediatric hospital.
+Prototype for turning payer policy updates into an evidence-backed review queue for a
+pediatric hospital.
 
-No Seattle Children's claims, contracts, patient data, or other non-public
-information are used.
+The project demonstrates an end-to-end workflow for:
 
-See `docs/payer_policy_submission_working_notes.md` for the full submission
-narrative: selected policies and why, source handling details, the planned
-Milestone 3-5 approach, and known gaps/tradeoffs.
+1. collecting payer policy documents and source metadata,
+2. identifying newly published or changed policies,
+3. detecting substantive policy changes rather than formatting-only changes,
+4. assessing likely relevance to a synthetic pediatric hospital profile,
+5. estimating potential exposure using synthetic claim volumes, and
+6. presenting prioritized changes in a lightweight human review application.
 
-## Current scope
+The prototype currently focuses on UnitedHealthcare Commercial policies and uses only
+public payer documents and synthetic hospital/claim data.
 
-- **Milestone 1 — complete**: deterministic collection.
-- **Milestone 2 — complete**: hybrid policy change detection (deterministic
-  diff + semantic alignment + Policy History corroboration + LLM
-  adjudication), evaluated against a controlled simulated-prior fixture set.
-- Relevance assessment and reviewer triage (Milestones 3-4) are not yet
-  implemented. `config/synthetic_hospital_profile.yaml` and
-  `data/synthetic_claim_volume.csv` are fixtures staged for that work but
-  aren't read by any code yet.
+- **`docs/payer_policy_submission_working_notes.md`** — direct answers to the
+  submission prompts: policies/links, date handling, relevance methodology,
+  performance + a false-positive/ambiguous case, AI use/confidentiality, next steps.
+- **`docs/RUNNING_GUIDE.md`** — exact step-by-step reproduction commands.
 
-## Setup
+## 1. Problem
 
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+Payer policy monitoring is difficult because a newly published PDF does not necessarily
+mean that an actionable coverage rule changed. A reviewer needs to answer: Did the
+payer publish a new version? What changed? Was it substantive or just
+administrative/formatting? Does it apply to our geography, plan, population, or
+billing setting? How many claims might be exposed? 
 
-Milestone 2's LLM adjudication step requires `HF_TOKEN` (a Hugging Face
-Inference Providers token) at run time -- see `.env.example`. The local
-MPNet alignment model downloads on first use (no token needed for that).
+This prototype separates those questions into distinct pipeline stages rather than
+asking one model to solve the entire problem end-to-end.
 
-## 1. Collect documents
+## 2. Architecture
 
-python scripts/collect.py
+![Architecture](architecture.png)
 
-Downloads each configured UHC policy PDF, preserves the raw bytes,
-extracts page-level text, and records metadata plus provenance from three
-distinct sources -- the policy PDF itself, its UHC index-page listing, and
-(only when the PDF has no explicit Effective Date) a linked official UHC
-bulletin resolved for the configured organization geography.
+AI interprets source evidence, but does not create the evidence. Source URLs, dates, page numbers, and exact before/after passages are retained from the deterministic document pipeline; model-generated summaries and interpretations are layered on top of them.
 
-Configuration lives in `config/sources.yaml`: each document's source URL,
-its UHC index-page family, an optional linked bulletin for effective-date
-fallback, and the organization's geography used to resolve state-specific
-exceptions.
+## 3. Source Selection
 
-Output: `data/processed/*.json` (raw PDFs in `data/raw/`).
+Five public UnitedHealthcare Commercial documents:
 
-**Known limitation:** `allergen_testing`'s bulletin-derived `effective_date`
-is currently `null`. The reimbursement bulletin's 3-column table (Policy
-Title | Effective Date | Policy Summary) is read in spatial order, which
-row-bands content across all three columns instead of keeping each title
-contiguous, so the title-substring match in `bulletin.py` no longer finds
-it. Not yet fixed.
 
-## 2. Process simulated prior versions
+| Document                                                    | Type                        | Role                                                       |
+| ----------------------------------------------------------- | --------------------------- | ---------------------------------------------------------- |
+| MRI and CT Scan – Site of Service                          | Medical Policy              | Change-detection example; site-of-care/pediatric relevance |
+| Spinraza (Nusinersen)                                       | Medical Benefit Drug Policy | Change-detection example; authorization/treatment rules    |
+| Sleep Studies                                               | Medical Policy              | Change-detection example; multiple substantive revisions   |
+| Allergen Testing Policy, Professional and Facility          | Reimbursement Policy        | Billing-setting/age-scope example                          |
+| August 2026 Commercial Reimbursement Policy Update Bulletin | Update bulletin             | Publication/event-level metadata example                   |
 
-python scripts/process_simulated_priors.py
+- https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/mri-ct-scan-site-of-service.pdf
+- https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/spinraza-nusinersen.pdf
+- https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/sleep-studies.pdf
+- https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-reimbursement/COMM-Allergen-Testing-Policy.pdf
+- https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-reimbursement/rpub/UHC-COMM-RPUB-August-2026.pdf
 
-Runs the same PDF extraction/metadata pipeline as step 1 against the three
-controlled simulated-prior PDFs in `data/simulated_prior_raw/` (see
-`docs/SIMULATED_PRIORS_README.md`). No payer URL or retrieval timestamp is
-invented for these local, non-payer artifacts; `is_simulated`,
-`artifact_type`, and `source_path` mark them as such.
+MRI/CT, Spinraza, and Sleep Studies got the full prior/current comparison. Their
+revision histories referenced prior versions that couldn't be reliably retrieved from
+the live site, so we use clearly labeled `SIMULATED PRIOR VERSION — NOT AN ORIGINAL PAYER ARTIFACT` fixtures for those three, reverted from the current policy using the payer's own revision-history language (details: `docs/SIMULATED_PRIORS_README.md`, submission notes §1).
 
-Output: `data/simulated_prior_processed/*.json`.
+## 4. How It Works
 
-## 3. Detect changes
+**Collection** is deterministic: HTTP retrieval → PDF validation → hash the exact
+bytes → page-level text extraction → explicit metadata only. Four date concepts
+(effective, revision, publication, index `Last Published`) are kept separate rather
+than collapsed into one — see submission notes §2 for how missing/conflicting dates
+are handled.
 
+**Change detection** is a three-stage hybrid, not one LLM call over the whole
+document: deterministic diffing discovers every textual difference (favoring recall);
+a local `sentence-transformers/all-mpnet-base-v2` model aligns which prior passage
+corresponds to which current one when a block is ambiguous — it never decides
+substantive-ness, and high similarity never suppresses a candidate ("under 16" vs.
+"under 18" score 0.94+ similar and still surface); `Qwen/Qwen3-235B-A22B-Instruct-2507`
+classifies each candidate as `substantive`/`non_substantive`/`uncertain` from the exact
+before/after text and extracts the structured fields relevance needs, in the same
+call. The payer's revision-history section is checked as corroborating evidence, never
+as an exhaustive list — a deliberately unlisted MRI/CT age-threshold change is still
+found and correctly classified.
+
+> **Result: 9/9 recall** against the hand-built ground truth for every payer-documented
+> change across the three test policies — plus the one deliberately *undocumented*
+> change (found independent of revision history) and exactly one identified false
+> positive, traced to a fixture-construction artifact rather than the detector. Full
+> breakdown: submission notes §4.
+
+**Relevance** runs only on substantive/uncertain candidates, comparing structured
+fields (`service_area`, `billing_setting`, `age`, `codes`, `states`, `plan_scope`) against a synthetic hospital profile
+(`config/synthetic_hospital_profile.yaml`). Output is a conservative three-way
+`relevant`/`irrelevant`/`needs_investigation`, and codes are used when present but
+never required (submission notes §3).
+
+**Synthetic claim-volume impact** runs on relevant/needs-investigation items only,
+using a strict matching cascade against `data/synthetic_claim_volume.csv` (explicit
+plan → explicit code → newly-affected age band → service-area proxy, each clearly
+labeled) — never a dollar estimate, never a silent fallback to a broader number.
+
+**The reviewer app** (`app.py`, `streamlit run app.py`) is a thin layer over
+`data/review/final_review_queue.json`: browse/filter the queue, inspect exact
+before/after evidence and the source PDF, and record a `Relevant`/`Irrelevant`/`Needs investigation` decision — kept separate from the automated `relevance` field.
+Substantive items with automated relevance `relevant`/`needs_investigation` are
+required before the completed review can be submitted.
+
+![Reviewer app — queue, sorted by potential claim exposure](app-1.png)
+![Reviewer app — the MRI age-threshold item open](app-2.png)
+*The same age-threshold example from the callout above, open in `app.py`: summary,
+why it may matter, the 940-claim-line synthetic impact estimate, the exact
+before/after evidence side by side, and the source PDF tab.*
+
+## 5. Engineering Decisions
+
+- **Deterministic monitoring before LLM analysis.** Hashing, dates, source URLs, and
+  document identity don't need an LLM.
+- **Hybrid semantic detection.** Embeddings match passages; they don't decide
+  significance.
+- **Revision history is corroboration, not ground truth.** Undocumented changes can
+  still be detected.
+- **One LLM pass.** The same Qwen call classifies the change and extracts the
+  structured fields relevance needs downstream.
+- **Exact evidence is immutable.** LLM output never replaces the original
+  before/after text.
+- **Relevance is separate from change detection.** A real policy change may still be
+  irrelevant to a particular hospital.
+- **Impact is conservative.** Synthetic matched volume is potential exposure, not a
+  guaranteed affected-claim count.
+- **Human review is final.**
+
+## 6. Limitations
+
+- Historical payer PDFs were unavailable, requiring clearly labeled simulated priors,
+  which can themselves introduce extraction artifacts (submission notes §4).
+- The synthetic hospital profile and claim volumes are illustrative, not Seattle
+  Children's actual contracts, claims, or plan mix.
+- No dollar amounts are estimated anywhere in the pipeline, by design.
+- QC is currently manual over a small dataset — see submission notes §6 for what a
+  larger evaluation set and model benchmarking would look like before deployment.
+
+## 7. Repository Structure
+
+```text
+config/            sources.yaml, synthetic_hospital_profile.yaml
+data/
+    raw/, processed/                       real UHC PDFs + metadata
+    simulated_prior_raw/, simulated_prior_processed/
+    change_results/                        frozen historical QC snapshot
+    review/                                current pipeline output + completed reviews
+    synthetic_claim_volume.csv
+scripts/           collect.py, process_simulated_priors.py, detect_changes.py,
+                   review_processing.py, build_*_workbook.py (QC helpers, no LLM)
+src/payer_policy/  ...
+tests/             ...
+app.py
+```
+
+## 8. Running It
+
+```
+python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+python scripts/collect.py && python scripts/process_simulated_priors.py
 HF_TOKEN='hf_...' python scripts/detect_changes.py
-
-For each of the three simulated-prior/current pairs (MRI/CT, Spinraza,
-Sleep Studies), runs the Milestone 2 pipeline end to end:
-
-1. **Candidate generation** (`change.py`) -- normalizes only presentation
-   noise (whitespace, line wrapping), then diffs paragraphs with
-   `difflib`. The Policy History/Revision Information section is excluded
-   from this diff on both sides (it's used separately as evidence, see
-   step 3). CPT/HCPCS code tables and "o  " sub-bullet lists are split into
-   one paragraph per item so an unrelated unchanged code/criterion isn't
-   dragged into a diff candidate.
-2. **Semantic alignment** -- a local `sentence-transformers/all-mpnet-base-v2`
-   model (`align.py`) is used only to pair corresponding prior/current
-   passages within an ambiguous multi-item diff block (combined with
-   lexical overlap and position); it never decides whether a matched pair
-   is substantive, and a high similarity score never suppresses a
-   candidate.
-3. **Policy History corroboration** -- for each candidate, checks whether
-   the current policy's history section appears to describe it (requiring
-   *both* meaningful semantic similarity and lexical overlap, since a long
-   candidate passage can otherwise drift toward any policy-domain text on
-   topic alone). Sets `revision_history_match`/`revision_history_evidence`
-   but never discards an unmatched candidate.
-4. **LLM adjudication** (`adjudicate.py`) -- every candidate is sent to
-   Hugging Face Inference Providers (default `Qwen/Qwen3-235B-A22B-Instruct-2507`
-   via the `novita` provider; configurable via `CHANGE_LLM_MODEL` /
-   `CHANGE_LLM_PROVIDER`) with the exact BEFORE/AFTER text, section, and
-   any matching history passage, and classified `substantive` /
-   `non_substantive` / `uncertain` with structured, Pydantic-validated
-   JSON output. Administrative/simulation-artifact text (a "SIMULATED
-   PRIOR VERSION" banner, a bare policy-number/effective-date change, page
-   header/footer/copyright boilerplate) is treated as non-substantive
-   unless bundled with real rule content. Malformed LLM output falls back
-   to `uncertain` rather than crashing the run.
-
-Output: one `data/change_results/{document_id}_changes.json` per pair,
-plus a combined `data/change_results/review_queue.json` (all candidates,
-substantive/uncertain sorted first).
-
-**Evaluated against a controlled ground truth** (`tests/fixtures/SIMULATED_PRIORS_GROUND_TRUTH.json`,
-never read by production code) for internal QC: 9/9 documented substantive
-test changes across the three pairs are correctly found and classified.
-Known residual limitations, not yet fixed:
-- A few real edits sit in the same unmarked bullet-list paragraph as an
-  adjacent wording-only edit (no reliable bullet marker survived PDF text
-  extraction for that list level), so the bundle is classified
-  substantive as a whole rather than isolating the wording-only part.
-- Two Spinraza differences (a garbled "a; and" fragment; an undocumented
-  "planned inpatient admission" criterion) look like unintended fixture
-  artifacts rather than deliberate test cases -- flagged, not tuned around.
-
-## 4. Build review workbooks
-
-python scripts/build_qc_workbook.py
-
-Writes `data/change_results/change_detection_qc.xlsx` -- a human-readable
-rendering of the detector's own output (one tab per policy pair, no ground
-truth), safe for a blind human review.
-
-python scripts/build_ground_truth_excel.py
-
-Writes `tests/fixtures/SIMULATED_PRIORS_GROUND_TRUTH.xlsx` -- a plain
-flattened view of the ground-truth fixture, for internal reference only.
-
-## Run tests
-
+python scripts/review_processing.py
 pytest tests/
+streamlit run app.py
+```
 
-## Data provenance (Milestone 1)
-
-Each record in `data/processed/` includes:
-
-- source URL, UTC retrieval timestamp, and SHA-256 of the exact downloaded
-  bytes (the raw PDF itself is preserved under `data/raw/`)
-- page-level extracted text, in spatial reading order
-  (`page.get_text("text", sort=True)`) so edited/reinserted text objects in
-  the simulated-prior PDFs don't extract out of their visual position
-- `policy_number`, `publication_date`, `revision_date` -- parsed only from
-  explicit labels or a formal revision-history section in the PDF; left
-  null when no such evidence exists
-- `effective_date` -- the PDF's own Effective Date when present, otherwise
-  resolved from a linked UHC bulletin's default or state-exception date;
-  `effective_date_provenance` records the bulletin and geography whenever
-  the latter applies
-- `last_published_date`, `index_url`, `index_observed_at` -- from the
-  document's official UHC index-page listing, kept distinct from the
-  PDF-derived dates above
-
-Missing values remain null rather than being guessed.
-
-## Auditable output (Milestone 2)
-
-Each `ChangeRecord` in `data/change_results/` includes exact `before_text`/
-`after_text` and `revision_history_evidence` (verbatim source substrings,
-never paraphrased), `change_type`, `section`, `prior_page`/`current_page`,
-`semantic_similarity`, `revision_history_match`, `classification`,
-`changed_dimensions`, `summary`, `reason`, `confidence`, and
-`review_status` (defaults to `"pending"`) -- understandable without
-reopening the source PDFs.
+Full explanation of each step, expected output, and troubleshooting:
+`docs/RUNNING_GUIDE.md`.

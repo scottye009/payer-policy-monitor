@@ -15,7 +15,7 @@ def _doc(document_id: str, text: str) -> PolicyDocument:
     )
 
 
-def _fake_adjudicate(before_text, after_text, section, revision_history_evidence):
+def _fake_adjudicate(before_text, after_text, section, revision_history_evidence, **kwargs):
     return LLMAdjudication(
         classification="uncertain", summary="test", reason="test", changed_dimensions=[], confidence=0.5
     )
@@ -175,6 +175,43 @@ def test_exact_before_after_evidence_is_preserved():
     # not the whitespace-normalized version used internally for diffing.
     assert records[0].before_text == "Coverage is limited to\npatients under 16\nyears of age.\n"
     assert records[0].after_text == "Coverage is limited to\npatients under 18\nyears of age.\n"
+
+
+def test_enrichment_fields_propagate_from_adjudication_to_change_record():
+    def _fake_adjudicate_with_enrichment(before_text, after_text, section, revision_history_evidence, **kwargs):
+        return LLMAdjudication(
+            classification="substantive",
+            summary="test",
+            reason="test",
+            changed_dimensions=["age/numeric thresholds"],
+            confidence=0.9,
+            why_it_may_matter="Broadens pediatric eligibility.",
+            billing_setting="hospital_outpatient",
+            service_area="imaging",
+            age_min=16,
+            age_max=18,
+            codes=["70471"],
+            states=["IL"],
+            plan_scope=["commercial"],
+            additional_data_needed=["patient_age"],
+        )
+
+    prior = _doc("prior", "Coverage Rationale\n\nCoverage is limited to patients under 16 years of age.\n")
+    current = _doc("current", "Coverage Rationale\n\nCoverage is limited to patients under 18 years of age.\n")
+
+    records = detect_changes(prior, current, adjudicate_fn=_fake_adjudicate_with_enrichment)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.why_it_may_matter == "Broadens pediatric eligibility."
+    assert record.billing_setting == "hospital_outpatient"
+    assert record.service_area == "imaging"
+    assert record.age_min == 16
+    assert record.age_max == 18
+    assert record.codes == ["70471"]
+    assert record.states == ["IL"]
+    assert record.plan_scope == ["commercial"]
+    assert record.additional_data_needed == ["patient_age"]
 
 
 def test_malformed_llm_output_is_handled_explicitly():

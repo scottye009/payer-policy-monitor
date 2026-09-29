@@ -15,10 +15,9 @@ The project demonstrates an end-to-end workflow for:
 The prototype currently focuses on UnitedHealthcare Commercial policies and uses only
 public payer documents and synthetic hospital/claim data.
 
-- **`docs/payer_policy_submission_working_notes.md`** — direct answers to the
-  submission prompts: policies/links, date handling, relevance methodology,
-  performance + a false-positive/ambiguous case, AI use/confidentiality, next steps.
-- **`docs/RUNNING_GUIDE.md`** — exact step-by-step reproduction commands.
+- **`docs/payer_policy_submission_working_notes.md`** — answers to the
+  submission prompts.
+- **`docs/RUNNING_GUIDE.md`** — reproduction commands.
 
 ## 1. Problem
 
@@ -35,7 +34,7 @@ asking one model to solve the entire problem end-to-end.
 
 ![Architecture](screenshots/architecture.png)
 
-AI interprets source evidence, but does not create the evidence. Source URLs, dates, page numbers, and exact before/after passages are retained from the deterministic document pipeline; model-generated summaries and interpretations are layered on top of them.
+Source URLs, dates, page numbers, and exact before/after passages are retained from the deterministic document pipeline; model-generated summaries and interpretations are layered on top of them.
 
 ## 3. Source Selection
 
@@ -69,9 +68,7 @@ prior/current comparison doesn't apply to it the same way.
 
 **Collection** is deterministic: HTTP retrieval → PDF validation → hash the exact
 bytes → page-level text extraction → explicit metadata only. Four date concepts
-(effective, revision, publication, index `Last Published`) are kept separate rather
-than collapsed into one — see submission notes §2 for how missing/conflicting dates
-are handled.
+(effective, revision, publication, index `Last Published`) are kept separate.
 
 ![Extraction example — source PDF alongside the exact extracted text/metadata](screenshots/extraction-example.png)
 
@@ -114,12 +111,11 @@ and `data/review/final_review_queue.json`:
   "Attended PAP Titration", "Attended Repeat Testing") the history splitter doesn't
   recognize as boundaries, so they collapse into one 3,000+ character history entry.
   Semantic similarity against that entry is still strong (0.66-0.76) for the missed
-  candidates, but the lexical-overlap half of the dual similarity+lexical threshold —
-  added earlier to kill a real false-positive corroboration match — drops to 0.04-0.09
+  candidates, but the lexical-overlap half of the dual similarity+lexical threshold drops to 0.04-0.09
   because a short quote gets diluted against a much longer, multi-topic blob.
   Classification succeeds independently from the before/after text either way, so this
   doesn't cost recall, but the reviewer-facing "Policy History confirms this" citation
-  is missing on roughly half the cases where it should be there. Noted, not fixed.
+  is missing on roughly half the cases where it should be there. Noted, not fixed due to time contraint.
 
 **Relevance** runs only on substantive/uncertain candidates, comparing structured
 fields (`service_area`, `billing_setting`, `age`, `codes`, `states`, `plan_scope`) against a synthetic hospital profile
@@ -130,10 +126,10 @@ never required (submission notes §3).
 **Synthetic claim-volume impact** runs on relevant/needs-investigation items only,
 using a strict matching cascade against `data/synthetic_claim_volume.csv` (explicit
 plan → explicit code → newly-affected age band → service-area proxy, each clearly
-labeled) — never a dollar estimate, never a silent fallback to a broader number.
+labeled).
 
 Three full rows from `data/review/final_review_queue.json`, chosen to show three
-different outcomes rather than the flashiest one — every field, nothing trimmed:
+different outcomes:
 
 **`mri_ct_site_of_service-0002`** — substantive, but irrelevant to this hospital
 
@@ -212,9 +208,7 @@ different outcomes rather than the flashiest one — every field, nothing trimme
 | relevance / relevance_reason                         | *(null / null — never assessed)*                                                                                                                                                                                      |
 | potential_annual_claim_lines / impact_note           | *(null / null — never estimated)*                                                                                                                                                                                     |
 
-The middle row is the most interesting: a real coverage expansion the system correctly
-flags as relevant, where it explicitly refuses to produce a number rather than fall
-back to a broader, less precise estimate. All three are live output, unedited, from
+All three are live output, unedited, from
 `data/review/final_review_queue.json` and browsable in the app below.
 
 **The reviewer app** (`app.py`, `streamlit run app.py`) is a thin layer over
@@ -250,12 +244,11 @@ before/after evidence side by side, and the source PDF tab.*
 ## 6. Limitations
 
 - Historical payer PDFs were unavailable, requiring clearly labeled simulated priors,
-  which can themselves introduce extraction artifacts (submission notes §4).
+  which can themselves introduce extraction artifacts.
 - Policy History corroboration under-matches on documents whose history section
   nests multiple changes under sub-headings the splitter doesn't recognize (e.g.
   Sleep Studies) — only 4/9 ground-truth changes got `revision_history_match: true`,
   even though all 9 were still correctly classified `substantive` from the text alone.
-  Noted, not yet fixed (submission notes §4).
 - The synthetic hospital profile and claim volumes are illustrative, not Seattle
   Children's actual contracts, claims, or plan mix.
 - No dollar amounts are estimated anywhere in the pipeline, by design.

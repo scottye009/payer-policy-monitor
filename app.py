@@ -17,7 +17,15 @@ COMPLETED_JSON_PATH = ROOT / "data" / "review" / "completed_review.json"
 COMPLETED_CSV_PATH = ROOT / "data" / "review" / "completed_review_summary.csv"
 
 sys.path.insert(0, str(ROOT / "src"))
-from payer_policy.source_check import MONITORED_POLICY_IDS, check_for_updates, get_status  # noqa: E402
+sys.path.insert(0, str(ROOT / "scripts"))
+from payer_policy.review_store import REVIEW_STATUSES, list_findings, save_findings, save_review  # noqa: E402
+from payer_policy.source_check import (  # noqa: E402
+    MONITORED_POLICY_IDS,
+    check_for_updates,
+    get_status,
+    get_version_by_hash,
+)
+from update_pipeline import run_update_pipeline  # noqa: E402
 
 POLICY_LABELS = {
     "mri_ct_site_of_service": "MRI/CT Site of Service",
@@ -123,9 +131,10 @@ def render_policy_update_check() -> None:
                 check_for_updates(policy_id)
 
     rows = []
+    statuses = {}
     for policy_id in MONITORED_POLICY_IDS:
         label = POLICY_LABELS.get(policy_id, policy_id)
-        status = get_status(policy_id)
+        status = statuses[policy_id] = get_status(policy_id)
         if status is None:
             rows.append({"policy": label, "status": "Not checked yet"})
             continue
@@ -152,6 +161,167 @@ def render_policy_update_check() -> None:
             st.error(f"{label}: Failed — {status.error}. Last good version kept.")
 
     st.dataframe(rows, use_container_width=True, hide_index=True)
+    render_analyze_changes(statuses)
+
+
+def render_analyze_changes(statuses: dict) -> None:
+    """Only an UPDATED check offers analysis, and only an explicit click runs
+    the pipeline (MPNet + Qwen). Findings go straight to SQLite; re-analyzing
+    the same version pair adds nothing and never resets a review."""
+    for policy_id, status in statuses.items():
+        if status is None or status.status != "updated":
+            continue
+        label = POLICY_LABELS.get(policy_id, policy_id)
+        saved = sum(
+            1 for f in list_findings(policy_id)
+            if (f.previous_hash, f.current_hash) == (status.previous_hash, status.current_hash)
+        )
+
+        if st.button(f"Analyze changes — {label}", key=f"analyze_{policy_id}"):
+            with st.spinner(f"Analyzing {label} (MPNet alignment + Qwen adjudication)..."):
+                try:
+                    result = run_update_pipeline(policy_id, status)
+                except Exception as exc:
+                    st.error(f"{label}: analysis failed — {exc}")
+                else:
+                    added = save_findings(policy_id, result.previous_hash, result.current_hash, result.findings)
+                    saved = len(result.findings)
+                    st.success(f"{label}: {saved} finding(s) for this comparison, {added} new.")
+        elif saved:
+            st.caption(
+                f"{label}: {saved} finding(s) already saved for this comparison. Re-analyzing "
+                "won't duplicate them or reset reviews."
+            )
+
+
+def render_monitored_findings() -> None:
+    """Findings from analyzed version pairs, read from SQLite on every render
+    so review state survives reruns, restarts, and later source checks."""
+    st.subheader("Monitored findings")
+    findings = list_findings()
+    if not findings:
+        st.caption("No saved findings yet. Click Analyze changes on an Updated policy.")
+        return
+
+    show_non_substantive = st.checkbox("Show non_substantive findings", value=False, key="mf_show_all")
+    visible = [f for f in findings if show_non_substantive or f.record["classification"] != "non_substantive"]
+    visible.sort(key=lambda f: (f.review_status != "pending", f.record["classification"] == "non_substantive"))
+    pending = sum(1 for f in findings if f.review_status == "pending")
+    st.caption(f"{len(visible)} of {len(findings)} shown · {pending} pending review")
+    if not visible:
+        return
+
+    selection = st.dataframe(
+        [
+            {
+                "policy": POLICY_LABELS.get(f.policy_id, f.policy_id),
+                "comparison": f"{short_hash(f.previous_hash)} → {short_hash(f.current_hash)}",
+                "classification": f.record["classification"],
+                "relevance": f.record.get("relevance"),
+                "section": f.record.get("section"),
+                "summary": f.record.get("summary"),
+                "review_status": f.review_status,
+            }
+            for f in visible
+        ],
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="mf_table",
+    )
+    rows = selection.selection.rows if selection and selection.selection else []
+    if rows:
+        st.session_state.mf_selected = visible[rows[0]].finding_id
+    selected = next((f for f in visible if f.finding_id == st.session_state.get("mf_selected")), visible[0])
+    render_monitored_finding(selected)
+
+
+def render_monitored_finding(f) -> None:
+    r = f.record
+    fid = f.finding_id
+    label = POLICY_LABELS.get(f.policy_id, f.policy_id)
+    previous = get_version_by_hash(f.policy_id, f.previous_hash)
+    current = get_version_by_hash(f.policy_id, f.current_hash)
+    previous_is_simulated = bool(previous and previous.is_simulated)
+
+    st.markdown(f"**{label} · finding `{short_hash(fid)}`**")
+
+    st.markdown("#### 1. Source evidence")
+    previous_label = "SIMULATED prior" if previous_is_simulated else "previous live UHC PDF"
+    st.write(
+        f"Comparison: {previous_label} `{short_hash(f.previous_hash)}` → "
+        f"live UHC PDF `{short_hash(f.current_hash)}` · change type: {r['change_type']}"
+    )
+    st.write(
+        f"Section: {r.get('section') or '—'} (prior page {r.get('prior_page') or '—'}, "
+        f"current page {r.get('current_page') or '—'})"
+    )
+    if r.get("source_url"):
+        st.markdown(f"[Source policy PDF]({r['source_url']})")
+    ev_left, ev_right = st.columns(2)
+    with ev_left:
+        st.markdown("**BEFORE**")
+        st.text_area("mf_before", r.get("before_text") or "(none -- this passage was added)", height=180,
+                     key=f"mf_before_{fid}", disabled=True, label_visibility="collapsed")
+    with ev_right:
+        st.markdown("**AFTER**")
+        st.text_area("mf_after", r.get("after_text") or "(none -- this passage was removed)", height=180,
+                     key=f"mf_after_{fid}", disabled=True, label_visibility="collapsed")
+    if r.get("revision_history_evidence"):
+        st.markdown(f"**Policy History match** (`revision_history_match={r['revision_history_match']}`)")
+        st.text_area("mf_history", r["revision_history_evidence"], height=100,
+                     key=f"mf_history_{fid}", disabled=True, label_visibility="collapsed")
+    else:
+        st.caption(f"Policy History match: {r.get('revision_history_match')} (no matching passage found)")
+    tab_current, tab_previous = st.tabs(["Current version", "Previous version"])
+    with tab_current:
+        if current:
+            render_pdf(ROOT / current.snapshot_path, r.get("current_page"), key=f"mf_current_{fid}")
+    with tab_previous:
+        if previous_is_simulated:
+            st.warning("SIMULATED PRIOR — not an original payer artifact")
+        if previous:
+            render_pdf(ROOT / previous.snapshot_path, r.get("prior_page"), key=f"mf_previous_{fid}")
+
+    st.markdown("#### 2. Automated interpretation")
+    st.caption("Produced by the pipeline (Qwen adjudication + deterministic relevance rules), not by a reviewer.")
+    badge_cols = st.columns(4)
+    badge_cols[0].metric("Classification", r["classification"])
+    badge_cols[1].metric("Automated relevance", str(r.get("relevance")))
+    badge_cols[2].metric("Confidence", r.get("confidence"))
+    badge_cols[3].metric("Potential annual claim lines", r.get("potential_annual_claim_lines"))
+    left, right = st.columns([3, 2])
+    with left:
+        st.markdown("**Summary**")
+        st.write(r.get("summary") or "—")
+        st.markdown("**Why it may matter**")
+        st.write(r.get("why_it_may_matter") or "—")
+        if r.get("relevance_reason"):
+            st.markdown("**Relevance reason**")
+            st.write(r["relevance_reason"])
+        if r.get("impact_note"):
+            st.markdown("**Impact note**")
+            st.write(r["impact_note"])
+    with right:
+        st.markdown("**Billing setting**")
+        st.write(r.get("billing_setting") or "unknown")
+        st.markdown("**Service area**")
+        st.write(r.get("service_area") or "unknown")
+        st.markdown("**Effective date**")
+        st.write(r.get("effective_date") or "—")
+
+    st.markdown("#### 3. Human review")
+    status = st.radio(
+        "Review status", REVIEW_STATUSES, index=REVIEW_STATUSES.index(f.review_status),
+        key=f"mf_status_{fid}", horizontal=True,
+    )
+    note = st.text_area("Review note", value=f.review_note, key=f"mf_note_{fid}")
+    if f.reviewed_at:
+        st.caption(f"Last reviewed at {f.reviewed_at}")
+    if st.button("Save review", key=f"mf_save_{fid}", type="primary"):
+        save_review(fid, status, note)
+        st.rerun()
 
 
 st.set_page_config(page_title="Payer Policy Change Review", layout="wide")
@@ -171,6 +341,10 @@ st.caption(
 
 # --- Policy update check -------------------------------------------------------
 render_policy_update_check()
+st.divider()
+
+# --- Monitored findings (persisted) ---------------------------------------------
+render_monitored_findings()
 st.divider()
 
 # --- Sidebar: filters + progress -------------------------------------------------

@@ -79,6 +79,16 @@ class CheckResult:
     error: str | None = None
 
 
+@dataclass
+class SourceVersion:
+    policy_id: str
+    content_sha256: str
+    source_url: str
+    snapshot_path: str  # repo-relative, or absolute outside the repo
+    retrieved_at: str
+    is_simulated: bool
+
+
 def check_for_updates(
     policy_id: str,
     *,
@@ -129,6 +139,27 @@ def get_status(policy_id: str, *, db_path: Path = DEFAULT_DB_PATH) -> CheckResul
         current_snapshot_path=row["current_snapshot_path"],
         current_is_simulated=None if row["current_is_simulated"] is None else bool(row["current_is_simulated"]),
         error=row["error"],
+    )
+
+
+def get_version_by_hash(
+    policy_id: str, content_sha256: str, *, db_path: Path = DEFAULT_DB_PATH
+) -> SourceVersion | None:
+    """The stored version of `policy_id` with this content hash, if any."""
+    with closing(_connect(db_path)) as conn:
+        row = conn.execute(
+            "SELECT * FROM policy_versions WHERE policy_id = ? AND content_sha256 = ?",
+            (policy_id, content_sha256),
+        ).fetchone()
+    if row is None:
+        return None
+    return SourceVersion(
+        policy_id=row["policy_id"],
+        content_sha256=row["content_sha256"],
+        source_url=row["source_url"],
+        snapshot_path=row["snapshot_path"],
+        retrieved_at=row["retrieved_at"],
+        is_simulated=bool(row["is_simulated"]),
     )
 
 

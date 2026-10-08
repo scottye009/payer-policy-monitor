@@ -2,7 +2,14 @@ import sqlite3
 
 import pytest
 
-from payer_policy.review_store import finding_id, list_findings, save_findings, save_review
+from payer_policy.review_store import (
+    clear_findings,
+    completed_reviews,
+    finding_id,
+    list_findings,
+    save_findings,
+    save_review,
+)
 from payer_policy.source_check import check_for_updates, get_status
 
 POLICY_ID = "mri_ct_site_of_service"
@@ -161,3 +168,26 @@ def test_shares_state_db_with_source_checks(db_path, tmp_path):
                       fetch_fn=lambda url: b"%PDF-1.7 live")
     assert get_status(POLICY_ID, db_path=db_path).status == "updated"
     assert len(list_findings(db_path=db_path)) == 1
+
+
+def test_completed_reviews_export_excludes_pending(db_path):
+    save_findings(POLICY_ID, HASH_A, HASH_B, [_record(n) for n in range(3)], db_path=db_path)
+    reviewed, dismissed, _pending = list_findings(db_path=db_path)
+    save_review(reviewed.finding_id, "reviewed", "Escalated.", db_path=db_path)
+    save_review(dismissed.finding_id, "dismissed", "Wording only.", db_path=db_path)
+
+    rows = completed_reviews(list_findings(db_path=db_path))
+
+    assert {r["finding_id"] for r in rows} == {reviewed.finding_id, dismissed.finding_id}
+    by_id = {r["finding_id"]: r for r in rows}
+    # The pipeline record's own placeholder review_status="pending" must not win.
+    assert by_id[reviewed.finding_id]["review_status"] == "reviewed"
+    assert by_id[dismissed.finding_id]["review_note"] == "Wording only."
+    assert by_id[reviewed.finding_id]["before_text"] == reviewed.record["before_text"]
+    assert all(r["reviewed_at"] for r in rows)
+
+
+def test_clear_findings_removes_findings_and_reviews(db_path):
+    save_findings(POLICY_ID, HASH_A, HASH_B, [_record(1)], db_path=db_path)
+    clear_findings(db_path=db_path)
+    assert list_findings(db_path=db_path) == []

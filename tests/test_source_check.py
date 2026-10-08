@@ -153,3 +153,19 @@ def test_policies_are_tracked_independently(paths):
 def test_unknown_policy_is_rejected(paths):
     with pytest.raises(ValueError):
         check_for_updates("spinraza", fetch_fn=_no_network, **paths)
+
+
+def test_clear_source_state_resets_to_simulated_baseline(paths):
+    check_for_updates(POLICY_ID, fetch_fn=_no_network, **paths)
+    check_for_updates(POLICY_ID, fetch_fn=_serve(LIVE_V1), **paths)
+    prior_pdf = source_check.SIMULATED_PRIORS[POLICY_ID]
+    prior_bytes = prior_pdf.read_bytes()
+
+    source_check.clear_source_state(**paths)
+
+    assert get_status(POLICY_ID, db_path=paths["db_path"]) is None
+    assert _rows(paths["db_path"], "policy_versions") == []
+    assert not paths["snapshot_dir"].exists()
+    # The simulated prior lives outside the snapshot dir and is untouched.
+    assert prior_pdf.read_bytes() == prior_bytes
+    assert check_for_updates(POLICY_ID, fetch_fn=_no_network, **paths).status == "initialized"

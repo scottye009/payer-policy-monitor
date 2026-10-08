@@ -9,6 +9,7 @@ touching the network; every later check fetches the configured UHC URL
 and compares its SHA256 against the latest known good version.
 """
 import os
+import shutil
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
@@ -161,6 +162,15 @@ def get_version_by_hash(
         retrieved_at=row["retrieved_at"],
         is_simulated=bool(row["is_simulated"]),
     )
+
+
+def clear_source_state(*, db_path: Path = DEFAULT_DB_PATH, snapshot_dir: Path = DEFAULT_SNAPSHOT_DIR) -> None:
+    """Demo reset: forget all versions and checks and delete captured live
+    snapshots. Simulated priors live outside snapshot_dir and are untouched."""
+    with closing(_connect(db_path)) as conn, conn:
+        conn.execute("DELETE FROM source_checks")
+        conn.execute("DELETE FROM policy_versions")
+    shutil.rmtree(snapshot_dir, ignore_errors=True)
 
 
 def _initialize_from_simulated_prior(conn: sqlite3.Connection, policy_id: str, source_url: str) -> None:

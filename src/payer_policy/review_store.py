@@ -142,6 +142,33 @@ def save_review(
             raise KeyError(f"no finding with id {finding_id}")
 
 
+def completed_reviews(findings: list[Finding]) -> list[dict]:
+    """Export rows for reviewed/dismissed findings only; pending is excluded.
+    The stored pipeline record comes first so the human review fields win:
+    the record carries the pipeline's own placeholder review_status="pending"."""
+    return [
+        {
+            **f.record,
+            "finding_id": f.finding_id,
+            "policy_id": f.policy_id,
+            "previous_hash": f.previous_hash,
+            "current_hash": f.current_hash,
+            "review_status": f.review_status,
+            "review_note": f.review_note,
+            "reviewed_at": f.reviewed_at,
+            "detected_at": f.detected_at,
+        }
+        for f in findings
+        if f.review_status != "pending"
+    ]
+
+
+def clear_findings(*, db_path: Path = DEFAULT_DB_PATH) -> None:
+    """Demo reset: delete all findings and their review state."""
+    with closing(_connect(db_path)) as conn, conn:
+        conn.execute("DELETE FROM findings")
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)

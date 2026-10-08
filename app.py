@@ -1,4 +1,6 @@
-"""Lightweight human-review layer over data/review/final_review_queue.json."""
+"""Payer policy review app: live policy monitoring (source checks, analysis,
+persisted findings and reviews) plus the static take-home review queue over
+data/review/final_review_queue.json."""
 import base64
 import csv
 import io
@@ -8,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
+import yaml
 
 ROOT = Path(__file__).resolve().parent
 QUEUE_PATH = ROOT / "data" / "review" / "final_review_queue.json"
@@ -18,10 +21,18 @@ COMPLETED_CSV_PATH = ROOT / "data" / "review" / "completed_review_summary.csv"
 
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
-from payer_policy.review_store import REVIEW_STATUSES, list_findings, save_findings, save_review  # noqa: E402
+from payer_policy.review_store import (  # noqa: E402
+    REVIEW_STATUSES,
+    clear_findings,
+    completed_reviews,
+    list_findings,
+    save_findings,
+    save_review,
+)
 from payer_policy.source_check import (  # noqa: E402
     MONITORED_POLICY_IDS,
     check_for_updates,
+    clear_source_state,
     get_status,
     get_version_by_hash,
 )
@@ -31,6 +42,15 @@ POLICY_LABELS = {
     "mri_ct_site_of_service": "MRI/CT Site of Service",
     "sleep_studies": "Sleep Studies",
 }
+CONFIG_PATH = ROOT / "config" / "sources.yaml"
+
+REVIEW_ICONS = {"pending": "⏳", "reviewed": "✅", "dismissed": "🚫"}
+
+EXPORT_CSV_FIELDS = [
+    "finding_id", "policy_id", "previous_hash", "current_hash", "review_status", "review_note",
+    "reviewed_at", "change_type", "section", "prior_page", "current_page", "before_text", "after_text",
+    "effective_date", "source_url", "classification", "relevance", "summary",
+]
 
 # The same three prior/current pairs scripts/detect_changes.py uses -- not
 # duplicated pipeline logic, just the display layer's way of finding each
@@ -194,71 +214,115 @@ def render_analyze_changes(statuses: dict) -> None:
             )
 
 
+@st.cache_data
+def policy_titles() -> dict[str, str]:
+    documents = yaml.safe_load(CONFIG_PATH.read_text())["documents"]
+    return {d["id"]: d["title"] for d in documents}
+
+
+def is_actionable(f) -> bool:
+    return f.record["classification"] != "non_substantive"
+
+
+def render_live_monitoring() -> None:
+    # Filled in last, so counts include findings saved or reviewed this run.
+    summary = st.empty()
+
+    render_policy_update_check()
+    st.divider()
+    render_monitored_findings()
+    st.divider()
+    render_export_completed_reviews()
+    st.divider()
+    render_demo_controls()
+
+    actionable = [f for f in list_findings() if is_actionable(f)]
+    pending = sum(1 for f in actionable if f.review_status == "pending")
+    with summary.container():
+        st.markdown(f"### Required review: {pending} pending / {len(actionable)} actionable findings")
+        st.caption("Actionable = substantive or uncertain. non_substantive findings stay available below.")
+
+
 def render_monitored_findings() -> None:
     """Findings from analyzed version pairs, read from SQLite on every render
     so review state survives reruns, restarts, and later source checks."""
-    st.subheader("Monitored findings")
+    st.subheader("Findings")
     findings = list_findings()
     if not findings:
         st.caption("No saved findings yet. Click Analyze changes on an Updated policy.")
         return
 
-    show_non_substantive = st.checkbox("Show non_substantive findings", value=False, key="mf_show_all")
-    visible = [f for f in findings if show_non_substantive or f.record["classification"] != "non_substantive"]
-    visible.sort(key=lambda f: (f.review_status != "pending", f.record["classification"] == "non_substantive"))
-    pending = sum(1 for f in findings if f.review_status == "pending")
-    st.caption(f"{len(visible)} of {len(findings)} shown · {pending} pending review")
+    show_all = st.checkbox("Show all findings (including non_substantive)", value=False, key="mf_show_all")
+    visible = [f for f in findings if show_all or is_actionable(f)]
+    visible.sort(key=lambda f: (f.review_status != "pending", not is_actionable(f)))
+    st.caption(
+        f"{len(visible)} of {len(findings)} findings shown · pending first · "
+        + " · ".join(f"{icon} {status}" for status, icon in REVIEW_ICONS.items())
+    )
     if not visible:
         return
 
-    selection = st.dataframe(
-        [
-            {
-                "policy": POLICY_LABELS.get(f.policy_id, f.policy_id),
-                "comparison": f"{short_hash(f.previous_hash)} → {short_hash(f.current_hash)}",
-                "classification": f.record["classification"],
-                "relevance": f.record.get("relevance"),
-                "section": f.record.get("section"),
-                "summary": f.record.get("summary"),
-                "review_status": f.review_status,
-            }
-            for f in visible
-        ],
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="mf_table",
+    for f in visible:
+        with st.expander(finding_label(f)):
+            render_monitored_finding(f)
+
+
+def finding_label(f) -> str:
+    r = f.record
+    summary = r.get("summary") or "—"
+    if len(summary) > 90:
+        summary = summary[:87] + "..."
+    return (
+        f"{REVIEW_ICONS[f.review_status]} {POLICY_LABELS.get(f.policy_id, f.policy_id)} · "
+        f"{r.get('section') or 'no section'} · {r['classification']} · {summary}"
     )
-    rows = selection.selection.rows if selection and selection.selection else []
-    if rows:
-        st.session_state.mf_selected = visible[rows[0]].finding_id
-    selected = next((f for f in visible if f.finding_id == st.session_state.get("mf_selected")), visible[0])
-    render_monitored_finding(selected)
+
+
+def _version_line(name: str, version) -> str:
+    if version is None:
+        return f"- **{name}:** not found"
+    kind = "SIMULATED prior (registered, not downloaded)" if version.is_simulated else "live UHC PDF"
+    timing = "registered" if version.is_simulated else "retrieved"
+    return (
+        f"- **{name}:** {kind} · sha256 `{short_hash(version.content_sha256)}` · "
+        f"`{version.snapshot_path}` · {timing} {version.retrieved_at}"
+    )
+
+
+def _listed(values) -> str:
+    return ", ".join(values) if values else "not stated"
 
 
 def render_monitored_finding(f) -> None:
     r = f.record
     fid = f.finding_id
-    label = POLICY_LABELS.get(f.policy_id, f.policy_id)
     previous = get_version_by_hash(f.policy_id, f.previous_hash)
     current = get_version_by_hash(f.policy_id, f.current_hash)
     previous_is_simulated = bool(previous and previous.is_simulated)
 
-    st.markdown(f"**{label} · finding `{short_hash(fid)}`**")
+    st.caption(
+        f"Finding `{short_hash(fid)}` · comparison `{short_hash(f.previous_hash)}` → "
+        f"`{short_hash(f.current_hash)}` · review status: {f.review_status}"
+    )
 
+    # --- 1. Source evidence: verbatim from config + captured PDFs ------------
     st.markdown("#### 1. Source evidence")
-    previous_label = "SIMULATED prior" if previous_is_simulated else "previous live UHC PDF"
-    st.write(
-        f"Comparison: {previous_label} `{short_hash(f.previous_hash)}` → "
-        f"live UHC PDF `{short_hash(f.current_hash)}` · change type: {r['change_type']}"
+    st.caption("From config and the captured PDFs only — no model output in this section.")
+    st.markdown(f"**Policy:** {policy_titles().get(f.policy_id, f.policy_id)}")
+    source_url = current.source_url if current else r.get("source_url")
+    if source_url:
+        st.markdown(f"**Canonical source URL:** {source_url}")
+    st.markdown(_version_line("Previous", previous) + "\n" + _version_line("Current", current))
+    if previous_is_simulated:
+        st.warning("Previous version is a SIMULATED PRIOR — not an original payer artifact.")
+    st.markdown(
+        f"**Change:** {r['change_type']} · **Section:** {r.get('section') or '—'} · "
+        f"**Pages:** prior {r.get('prior_page') or '—'}, current {r.get('current_page') or '—'}"
     )
-    st.write(
-        f"Section: {r.get('section') or '—'} (prior page {r.get('prior_page') or '—'}, "
-        f"current page {r.get('current_page') or '—'})"
+    st.markdown(
+        f"**Effective date:** {r.get('effective_date') or 'not stated'} "
+        "(extracted from the current PDF's own text)"
     )
-    if r.get("source_url"):
-        st.markdown(f"[Source policy PDF]({r['source_url']})")
     ev_left, ev_right = st.columns(2)
     with ev_left:
         st.markdown("**BEFORE**")
@@ -268,60 +332,110 @@ def render_monitored_finding(f) -> None:
         st.markdown("**AFTER**")
         st.text_area("mf_after", r.get("after_text") or "(none -- this passage was removed)", height=180,
                      key=f"mf_after_{fid}", disabled=True, label_visibility="collapsed")
-    if r.get("revision_history_evidence"):
-        st.markdown(f"**Policy History match** (`revision_history_match={r['revision_history_match']}`)")
-        st.text_area("mf_history", r["revision_history_evidence"], height=100,
-                     key=f"mf_history_{fid}", disabled=True, label_visibility="collapsed")
-    else:
-        st.caption(f"Policy History match: {r.get('revision_history_match')} (no matching passage found)")
-    tab_current, tab_previous = st.tabs(["Current version", "Previous version"])
-    with tab_current:
-        if current:
-            render_pdf(ROOT / current.snapshot_path, r.get("current_page"), key=f"mf_current_{fid}")
-    with tab_previous:
-        if previous_is_simulated:
-            st.warning("SIMULATED PRIOR — not an original payer artifact")
-        if previous:
-            render_pdf(ROOT / previous.snapshot_path, r.get("prior_page"), key=f"mf_previous_{fid}")
+    # Collapsed expanders still render their contents, so embedded PDFs are
+    # opt-in per finding to keep every rerun light.
+    if st.toggle("Show snapshot PDFs", key=f"mf_pdfs_{fid}"):
+        tab_current, tab_previous = st.tabs(["Current snapshot", "Previous snapshot"])
+        with tab_current:
+            if current:
+                render_pdf(ROOT / current.snapshot_path, r.get("current_page"), key=f"mf_current_{fid}")
+        with tab_previous:
+            if previous_is_simulated:
+                st.warning("SIMULATED PRIOR — not an original payer artifact")
+            if previous:
+                render_pdf(ROOT / previous.snapshot_path, r.get("prior_page"), key=f"mf_previous_{fid}")
 
+    # --- 2. Automated interpretation: model output + deterministic rules -----
     st.markdown("#### 2. Automated interpretation")
-    st.caption("Produced by the pipeline (Qwen adjudication + deterministic relevance rules), not by a reviewer.")
-    badge_cols = st.columns(4)
+    st.caption(
+        "Generated by the pipeline: Qwen adjudication and model-extracted fields, then deterministic "
+        "relevance rules against the synthetic hospital profile. Verify against the source evidence."
+    )
+    badge_cols = st.columns(3)
     badge_cols[0].metric("Classification", r["classification"])
     badge_cols[1].metric("Automated relevance", str(r.get("relevance")))
     badge_cols[2].metric("Confidence", r.get("confidence"))
-    badge_cols[3].metric("Potential annual claim lines", r.get("potential_annual_claim_lines"))
-    left, right = st.columns([3, 2])
-    with left:
-        st.markdown("**Summary**")
-        st.write(r.get("summary") or "—")
-        st.markdown("**Why it may matter**")
-        st.write(r.get("why_it_may_matter") or "—")
-        if r.get("relevance_reason"):
-            st.markdown("**Relevance reason**")
-            st.write(r["relevance_reason"])
-        if r.get("impact_note"):
-            st.markdown("**Impact note**")
-            st.write(r["impact_note"])
-    with right:
-        st.markdown("**Billing setting**")
-        st.write(r.get("billing_setting") or "unknown")
-        st.markdown("**Service area**")
-        st.write(r.get("service_area") or "unknown")
-        st.markdown("**Effective date**")
-        st.write(r.get("effective_date") or "—")
-
-    st.markdown("#### 3. Human review")
-    status = st.radio(
-        "Review status", REVIEW_STATUSES, index=REVIEW_STATUSES.index(f.review_status),
-        key=f"mf_status_{fid}", horizontal=True,
+    st.markdown("**Summary**")
+    st.write(r.get("summary") or "—")
+    st.markdown("**Why it may matter**")
+    st.write(r.get("why_it_may_matter") or "—")
+    if r.get("relevance_reason"):
+        st.markdown("**Relevance reason**")
+        st.write(r["relevance_reason"])
+    age_min, age_max = r.get("age_min"), r.get("age_max")
+    population = (
+        "not stated" if age_min is None and age_max is None
+        else f"ages {age_min if age_min is not None else '?'}–{age_max if age_max is not None else '?'}"
     )
-    note = st.text_area("Review note", value=f.review_note, key=f"mf_note_{fid}")
-    if f.reviewed_at:
-        st.caption(f"Last reviewed at {f.reviewed_at}")
-    if st.button("Save review", key=f"mf_save_{fid}", type="primary"):
-        save_review(fid, status, note)
-        st.rerun()
+    st.markdown("**Model-extracted scope** (Qwen, not verified source facts)")
+    st.markdown(
+        f"- Plan scope: {_listed(r.get('plan_scope'))}\n"
+        f"- Population: {population}\n"
+        f"- Geography (states): {_listed(r.get('states'))}\n"
+        f"- Codes: {_listed(r.get('codes'))}\n"
+        f"- Billing setting: {r.get('billing_setting') or 'unknown'} · Service area: {r.get('service_area') or 'unknown'}"
+    )
+    needed = r.get("additional_data_needed") or []
+    st.markdown("**Suggested next step**")
+    st.write(
+        f"Gather before assessing impact: {', '.join(needed)}." if needed
+        else "No additional data flagged by the model; confirm the change against the source evidence."
+    )
+    if r.get("impact_note"):
+        st.caption(f"Synthetic claim-volume estimate: {r['impact_note']}")
+
+    # --- 3. Human review: the only part a reviewer edits ---------------------
+    st.markdown("#### 3. Human review")
+    # A form submits status + note together on one click; without it, the
+    # note's commit-on-blur rerun swallows the first Save click.
+    with st.form(key=f"mf_form_{fid}", border=False):
+        status = st.radio(
+            "Review status", REVIEW_STATUSES, index=REVIEW_STATUSES.index(f.review_status),
+            key=f"mf_status_{fid}", horizontal=True,
+        )
+        note = st.text_area("Review note", value=f.review_note, key=f"mf_note_{fid}")
+        if f.reviewed_at:
+            st.caption(f"Last reviewed at {f.reviewed_at}")
+        if st.form_submit_button("Save review", type="primary"):
+            save_review(fid, status, note)
+            st.rerun()
+
+
+def render_export_completed_reviews() -> None:
+    st.subheader("Export completed reviews")
+    rows = completed_reviews(list_findings())
+    if not rows:
+        st.caption("No reviewed or dismissed findings yet. Pending findings are never exported.")
+        return
+    st.caption(f"{len(rows)} completed review(s). Pending findings are excluded.")
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=EXPORT_CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    csv_col, json_col = st.columns(2)
+    csv_col.download_button(
+        "Download CSV", data=buf.getvalue(), file_name="live_completed_reviews.csv",
+        mime="text/csv", key="export_csv",
+    )
+    json_col.download_button(
+        "Download JSON", data=json.dumps(rows, indent=2), file_name="live_completed_reviews.json",
+        mime="application/json", key="export_json",
+    )
+
+
+def render_demo_controls() -> None:
+    with st.expander("Demo controls"):
+        st.caption(
+            "Clears live monitoring state only: source versions, source checks, findings and reviews, "
+            "and captured live snapshots under data/monitor/. Simulated priors, the historical review "
+            "queue, config, and tests are not touched."
+        )
+        confirmed = st.checkbox("I understand this clears live monitoring state", key="reset_confirm")
+        if st.button("Reset live demo", disabled=not confirmed, key="reset_demo"):
+            clear_findings()
+            clear_source_state()
+            st.session_state.pop("reset_confirm", None)
+            st.rerun()
 
 
 st.set_page_config(page_title="Payer Policy Change Review", layout="wide")
@@ -334,244 +448,242 @@ required_ids = {r["change_id"] for r in queue if r.get("relevance") in REQUIRED_
 completed_required = sum(1 for cid in required_ids if is_reviewed(cid))
 
 st.title("Payer Policy Change Review")
-st.caption(
-    "Thin review layer over data/review/final_review_queue.json. Does not call an LLM or "
-    "modify upstream detection/relevance/impact data."
-)
+tab_live, tab_historical = st.tabs(["Live Policy Monitoring", "Historical Review Queue (static demo)"])
 
-# --- Policy update check -------------------------------------------------------
-render_policy_update_check()
-st.divider()
+with tab_live:
+    render_live_monitoring()
 
-# --- Monitored findings (persisted) ---------------------------------------------
-render_monitored_findings()
-st.divider()
-
-# --- Sidebar: filters + progress -------------------------------------------------
-with st.sidebar:
-    st.header("Filters")
-    show_all = st.checkbox(
-        "Show all items (including non_substantive, irrelevant)",
-        value=False,
-        help="Default view emphasizes the substantive/uncertain, non-irrelevant items that actually need review.",
+with tab_historical:
+    st.caption(
+        "Thin review layer over data/review/final_review_queue.json. Does not call an LLM or "
+        "modify upstream detection/relevance/impact data."
     )
-    relevance_options = sorted({str(r.get("relevance")) for r in queue})
-    classification_options = sorted({r["classification"] for r in queue})
-    status_options = ["(any)", "reviewed", "not reviewed"]
 
-    relevance_filter = st.multiselect("Relevance", relevance_options, default=[])
-    classification_filter = st.multiselect("Classification", classification_options, default=[])
-    status_filter = st.selectbox("Review status", status_options, index=0)
+    # --- Sidebar: filters + progress -------------------------------------------------
+    with st.container(border=True):
+        st.header("Filters")
+        show_all = st.checkbox(
+            "Show all items (including non_substantive, irrelevant)",
+            value=False,
+            help="Default view emphasizes the substantive/uncertain, non-irrelevant items that actually need review.",
+        )
+        relevance_options = sorted({str(r.get("relevance")) for r in queue})
+        classification_options = sorted({r["classification"] for r in queue})
+        status_options = ["(any)", "reviewed", "not reviewed"]
+
+        relevance_filter = st.multiselect("Relevance", relevance_options, default=[])
+        classification_filter = st.multiselect("Classification", classification_options, default=[])
+        status_filter = st.selectbox("Review status", status_options, index=0)
+
+        st.divider()
+        st.header("Required reviews")
+        st.write(f"**{completed_required} / {len(required_ids)}** relevant / needs_investigation items reviewed")
+        st.progress(completed_required / len(required_ids) if required_ids else 1.0)
+
+    # --- Apply filters -----------------------------------------------------------
+    # By default, irrelevant and non_substantive items are hidden -- but an
+    # explicit filter selection (e.g. picking "irrelevant" in the Relevance
+    # multiselect) always overrides that default and brings them back.
+    visible = list(queue)
+    if not show_all:
+        if not relevance_filter:
+            visible = [r for r in visible if r.get("relevance") != "irrelevant"]
+        if not classification_filter:
+            visible = [r for r in visible if r["classification"] != "non_substantive"]
+
+    if relevance_filter:
+        visible = [r for r in visible if str(r.get("relevance")) in relevance_filter]
+    if classification_filter:
+        visible = [r for r in visible if r["classification"] in classification_filter]
+    if status_filter == "reviewed":
+        visible = [r for r in visible if is_reviewed(r["change_id"])]
+    elif status_filter == "not reviewed":
+        visible = [r for r in visible if not is_reviewed(r["change_id"])]
+
+
+    def _sort_key(r: dict) -> tuple:
+        claim_lines = r.get("potential_annual_claim_lines")
+        effective_date = r.get("effective_date")
+        return (
+            claim_lines is None,
+            -(claim_lines or 0),
+            effective_date is None,
+            effective_date or "",
+        )
+
+
+    visible = sorted(visible, key=_sort_key)
+
+    table_rows = [
+        {
+            "change_id": r["change_id"],
+            "document": r["document_id"],
+            "classification": r["classification"],
+            "relevance": r.get("relevance"),
+            "effective_date": r.get("effective_date"),
+            "potential_annual_claim_lines": r.get("potential_annual_claim_lines"),
+            "reviewer_status": "reviewed" if is_reviewed(r["change_id"]) else "pending",
+        }
+        for r in visible
+    ]
+
+    with st.expander(f"Queue ({len(visible)} of {len(queue)} shown)", expanded=True):
+        selection_event = st.dataframe(
+            table_rows,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="queue_table",
+        )
+        selected_rows = selection_event.selection.rows if selection_event and selection_event.selection else []
+        if selected_rows:
+            st.session_state.selected_change_id = visible[selected_rows[0]]["change_id"]
+
+    visible_ids = [r["change_id"] for r in visible]
+    if st.session_state.get("selected_change_id") not in visible_ids:
+        st.session_state.selected_change_id = next_pending_change_id(visible, None) or (
+            visible_ids[0] if visible_ids else None
+        )
+
+    selected_record = next(
+        (r for r in visible if r["change_id"] == st.session_state.selected_change_id), None
+    )
 
     st.divider()
-    st.header("Required reviews")
-    st.write(f"**{completed_required} / {len(required_ids)}** relevant / needs_investigation items reviewed")
-    st.progress(completed_required / len(required_ids) if required_ids else 1.0)
 
-# --- Apply filters -----------------------------------------------------------
-# By default, irrelevant and non_substantive items are hidden -- but an
-# explicit filter selection (e.g. picking "irrelevant" in the Relevance
-# multiselect) always overrides that default and brings them back.
-visible = list(queue)
-if not show_all:
-    if not relevance_filter:
-        visible = [r for r in visible if r.get("relevance") != "irrelevant"]
-    if not classification_filter:
-        visible = [r for r in visible if r["classification"] != "non_substantive"]
-
-if relevance_filter:
-    visible = [r for r in visible if str(r.get("relevance")) in relevance_filter]
-if classification_filter:
-    visible = [r for r in visible if r["classification"] in classification_filter]
-if status_filter == "reviewed":
-    visible = [r for r in visible if is_reviewed(r["change_id"])]
-elif status_filter == "not reviewed":
-    visible = [r for r in visible if not is_reviewed(r["change_id"])]
-
-
-def _sort_key(r: dict) -> tuple:
-    claim_lines = r.get("potential_annual_claim_lines")
-    effective_date = r.get("effective_date")
-    return (
-        claim_lines is None,
-        -(claim_lines or 0),
-        effective_date is None,
-        effective_date or "",
-    )
-
-
-visible = sorted(visible, key=_sort_key)
-
-table_rows = [
-    {
-        "change_id": r["change_id"],
-        "document": r["document_id"],
-        "classification": r["classification"],
-        "relevance": r.get("relevance"),
-        "effective_date": r.get("effective_date"),
-        "potential_annual_claim_lines": r.get("potential_annual_claim_lines"),
-        "reviewer_status": "reviewed" if is_reviewed(r["change_id"]) else "pending",
-    }
-    for r in visible
-]
-
-with st.expander(f"Queue ({len(visible)} of {len(queue)} shown)", expanded=True):
-    selection_event = st.dataframe(
-        table_rows,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="queue_table",
-    )
-    selected_rows = selection_event.selection.rows if selection_event and selection_event.selection else []
-    if selected_rows:
-        st.session_state.selected_change_id = visible[selected_rows[0]]["change_id"]
-
-visible_ids = [r["change_id"] for r in visible]
-if st.session_state.get("selected_change_id") not in visible_ids:
-    st.session_state.selected_change_id = next_pending_change_id(visible, None) or (
-        visible_ids[0] if visible_ids else None
-    )
-
-selected_record = next(
-    (r for r in visible if r["change_id"] == st.session_state.selected_change_id), None
-)
-
-st.divider()
-
-# --- Detail panel -------------------------------------------------------------
-if selected_record is None:
-    st.info("No items match the current filters.")
-else:
-    r = selected_record
-    change_id = r["change_id"]
-
-    st.subheader(f"{r['document_id']}  ·  {change_id}")
-    badge_cols = st.columns(4)
-    badge_cols[0].metric("Classification", r["classification"])
-    badge_cols[1].metric("Automated relevance", str(r.get("relevance")))
-    badge_cols[2].metric("Confidence", r.get("confidence"))
-    badge_cols[3].metric("Potential annual claim lines", r.get("potential_annual_claim_lines"))
-
-    left, right = st.columns([3, 2])
-    with left:
-        st.markdown("**Summary**")
-        st.write(r.get("summary") or "—")
-        st.markdown("**Why it may matter**")
-        st.write(r.get("why_it_may_matter") or "—")
-        if r.get("impact_note"):
-            st.markdown("**Impact note**")
-            st.write(r["impact_note"])
-    with right:
-        st.markdown("**Billing setting**")
-        st.write(r.get("billing_setting") or "unknown")
-        st.markdown("**Service area**")
-        st.write(r.get("service_area") or "unknown")
-        st.markdown("**Effective date**")
-        st.write(r.get("effective_date") or "—")
-        st.markdown("**Section / page**")
-        st.write(
-            f"{r.get('section') or '—'} "
-            f"(prior page {r.get('prior_page') or '—'}, current page {r.get('current_page') or '—'})"
-        )
-        if r.get("source_url"):
-            st.markdown(f"[Source policy PDF]({r['source_url']})")
-
-    st.markdown("#### Supporting evidence")
-    ev_left, ev_right = st.columns(2)
-    with ev_left:
-        st.markdown("**BEFORE**")
-        st.text_area("before_text", r.get("before_text") or "(none -- this passage was added)", height=180,
-                      key=f"before_{change_id}", disabled=True, label_visibility="collapsed")
-    with ev_right:
-        st.markdown("**AFTER**")
-        st.text_area("after_text", r.get("after_text") or "(none -- this passage was removed)", height=180,
-                      key=f"after_{change_id}", disabled=True, label_visibility="collapsed")
-
-    if r.get("revision_history_evidence"):
-        st.markdown(f"**Policy History match** (`revision_history_match={r['revision_history_match']}`)")
-        st.text_area("revision_history_evidence", r["revision_history_evidence"], height=100,
-                      key=f"history_{change_id}", disabled=True, label_visibility="collapsed")
+    # --- Detail panel -------------------------------------------------------------
+    if selected_record is None:
+        st.info("No items match the current filters.")
     else:
-        st.caption(f"Policy History match: {r.get('revision_history_match')} (no matching passage found)")
+        r = selected_record
+        change_id = r["change_id"]
 
-    st.markdown("#### Source PDF")
-    current_pdf = RAW_DIR / f"{r['document_id']}.pdf"
-    prior_id = PRIOR_PDF_BY_DOCUMENT_ID.get(r["document_id"])
-    prior_pdf = (SIMULATED_PRIOR_RAW_DIR / f"{prior_id}.pdf") if prior_id else None
+        st.subheader(f"{r['document_id']}  ·  {change_id}")
+        badge_cols = st.columns(4)
+        badge_cols[0].metric("Classification", r["classification"])
+        badge_cols[1].metric("Automated relevance", str(r.get("relevance")))
+        badge_cols[2].metric("Confidence", r.get("confidence"))
+        badge_cols[3].metric("Potential annual claim lines", r.get("potential_annual_claim_lines"))
 
-    if prior_pdf is not None:
-        tab_current, tab_prior = st.tabs(["Current policy", "Prior version"])
-        with tab_current:
+        left, right = st.columns([3, 2])
+        with left:
+            st.markdown("**Summary**")
+            st.write(r.get("summary") or "—")
+            st.markdown("**Why it may matter**")
+            st.write(r.get("why_it_may_matter") or "—")
+            if r.get("impact_note"):
+                st.markdown("**Impact note**")
+                st.write(r["impact_note"])
+        with right:
+            st.markdown("**Billing setting**")
+            st.write(r.get("billing_setting") or "unknown")
+            st.markdown("**Service area**")
+            st.write(r.get("service_area") or "unknown")
+            st.markdown("**Effective date**")
+            st.write(r.get("effective_date") or "—")
+            st.markdown("**Section / page**")
+            st.write(
+                f"{r.get('section') or '—'} "
+                f"(prior page {r.get('prior_page') or '—'}, current page {r.get('current_page') or '—'})"
+            )
+            if r.get("source_url"):
+                st.markdown(f"[Source policy PDF]({r['source_url']})")
+
+        st.markdown("#### Supporting evidence")
+        ev_left, ev_right = st.columns(2)
+        with ev_left:
+            st.markdown("**BEFORE**")
+            st.text_area("before_text", r.get("before_text") or "(none -- this passage was added)", height=180,
+                          key=f"before_{change_id}", disabled=True, label_visibility="collapsed")
+        with ev_right:
+            st.markdown("**AFTER**")
+            st.text_area("after_text", r.get("after_text") or "(none -- this passage was removed)", height=180,
+                          key=f"after_{change_id}", disabled=True, label_visibility="collapsed")
+
+        if r.get("revision_history_evidence"):
+            st.markdown(f"**Policy History match** (`revision_history_match={r['revision_history_match']}`)")
+            st.text_area("revision_history_evidence", r["revision_history_evidence"], height=100,
+                          key=f"history_{change_id}", disabled=True, label_visibility="collapsed")
+        else:
+            st.caption(f"Policy History match: {r.get('revision_history_match')} (no matching passage found)")
+
+        st.markdown("#### Source PDF")
+        current_pdf = RAW_DIR / f"{r['document_id']}.pdf"
+        prior_id = PRIOR_PDF_BY_DOCUMENT_ID.get(r["document_id"])
+        prior_pdf = (SIMULATED_PRIOR_RAW_DIR / f"{prior_id}.pdf") if prior_id else None
+
+        if prior_pdf is not None:
+            tab_current, tab_prior = st.tabs(["Current policy", "Prior version"])
+            with tab_current:
+                render_pdf(current_pdf, r.get("current_page"), key=f"current_{change_id}")
+            with tab_prior:
+                st.warning("SIMULATED PRIOR — not an original payer artifact")
+                render_pdf(prior_pdf, r.get("prior_page"), key=f"prior_{change_id}")
+        else:
+            st.caption("No simulated-prior PDF is associated with this document.")
             render_pdf(current_pdf, r.get("current_page"), key=f"current_{change_id}")
-        with tab_prior:
-            st.warning("SIMULATED PRIOR — not an original payer artifact")
-            render_pdf(prior_pdf, r.get("prior_page"), key=f"prior_{change_id}")
-    else:
-        st.caption("No simulated-prior PDF is associated with this document.")
-        render_pdf(current_pdf, r.get("current_page"), key=f"current_{change_id}")
 
-    st.markdown("#### Reviewer decision")
-    review = get_review(change_id)
-    required = r.get("relevance") in REQUIRED_RELEVANCE
-    if required:
-        st.caption("This item's automated relevance requires a reviewer decision before submission.")
+        st.markdown("#### Reviewer decision")
+        review = get_review(change_id)
+        required = r.get("relevance") in REQUIRED_RELEVANCE
+        if required:
+            st.caption("This item's automated relevance requires a reviewer decision before submission.")
 
-    current_label = VALUE_TO_DECISION.get(review["reviewer_decision"], "(none)")
-    chosen = st.radio(
-        "Reviewer decision", DECISION_OPTIONS, index=DECISION_OPTIONS.index(current_label),
-        key=f"decision_{change_id}", horizontal=True,
-    )
-    note = st.text_area(
-        "Reviewer note (optional)", value=review.get("reviewer_note", ""), key=f"note_{change_id}",
-    )
+        current_label = VALUE_TO_DECISION.get(review["reviewer_decision"], "(none)")
+        chosen = st.radio(
+            "Reviewer decision", DECISION_OPTIONS, index=DECISION_OPTIONS.index(current_label),
+            key=f"decision_{change_id}", horizontal=True,
+        )
+        note = st.text_area(
+            "Reviewer note (optional)", value=review.get("reviewer_note", ""), key=f"note_{change_id}",
+        )
 
-    new_decision = DECISION_TO_VALUE.get(chosen)
-    if new_decision != review["reviewer_decision"] or note != review.get("reviewer_note"):
-        decision_just_set = new_decision and not review["reviewer_decision"]
-        review["reviewer_decision"] = new_decision
-        review["reviewer_note"] = note
-        review["reviewed_at"] = datetime.now(timezone.utc).isoformat() if new_decision else None
-        if decision_just_set:
-            next_id = next_pending_change_id(visible, change_id)
-            if next_id:
-                st.session_state.selected_change_id = next_id
-        st.rerun()
+        new_decision = DECISION_TO_VALUE.get(chosen)
+        if new_decision != review["reviewer_decision"] or note != review.get("reviewer_note"):
+            decision_just_set = new_decision and not review["reviewer_decision"]
+            review["reviewer_decision"] = new_decision
+            review["reviewer_note"] = note
+            review["reviewed_at"] = datetime.now(timezone.utc).isoformat() if new_decision else None
+            if decision_just_set:
+                next_id = next_pending_change_id(visible, change_id)
+                if next_id:
+                    st.session_state.selected_change_id = next_id
+            st.rerun()
 
-st.divider()
+    st.divider()
 
-# --- Submission ----------------------------------------------------------------
-st.subheader("Submit completed review")
-st.write(f"Required reviews completed: **{completed_required} / {len(required_ids)}**")
+    # --- Submission ----------------------------------------------------------------
+    st.subheader("Submit completed review")
+    st.write(f"Required reviews completed: **{completed_required} / {len(required_ids)}**")
 
-can_submit = completed_required == len(required_ids) and len(required_ids) > 0
-if not can_submit:
-    missing = len(required_ids) - completed_required
-    st.warning(
-        f"{missing} required item(s) (automated relevance = relevant or needs_investigation) still "
-        "need a reviewer decision before the final review can be submitted."
-    )
+    can_submit = completed_required == len(required_ids) and len(required_ids) > 0
+    if not can_submit:
+        missing = len(required_ids) - completed_required
+        st.warning(
+            f"{missing} required item(s) (automated relevance = relevant or needs_investigation) still "
+            "need a reviewer decision before the final review can be submitted."
+        )
 
-if st.button("Submit completed review", disabled=not can_submit, type="primary"):
-    completed_records = build_completed_records(queue)
-    COMPLETED_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
-    COMPLETED_JSON_PATH.write_text(json.dumps(completed_records, indent=2))
-    COMPLETED_CSV_PATH.write_text(build_summary_csv(completed_records))
-    st.session_state.submitted = True
-    st.success(f"Wrote {COMPLETED_JSON_PATH.relative_to(ROOT)} and {COMPLETED_CSV_PATH.relative_to(ROOT)}.")
+    if st.button("Submit completed review", disabled=not can_submit, type="primary"):
+        completed_records = build_completed_records(queue)
+        COMPLETED_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
+        COMPLETED_JSON_PATH.write_text(json.dumps(completed_records, indent=2))
+        COMPLETED_CSV_PATH.write_text(build_summary_csv(completed_records))
+        st.session_state.submitted = True
+        st.success(f"Wrote {COMPLETED_JSON_PATH.relative_to(ROOT)} and {COMPLETED_CSV_PATH.relative_to(ROOT)}.")
 
-if st.session_state.get("submitted"):
-    completed_records = build_completed_records(queue)
-    st.download_button(
-        "Download completed_review.json",
-        data=json.dumps(completed_records, indent=2),
-        file_name="completed_review.json",
-        mime="application/json",
-    )
-    st.download_button(
-        "Download completed_review_summary.csv",
-        data=build_summary_csv(completed_records),
-        file_name="completed_review_summary.csv",
-        mime="text/csv",
-    )
+    if st.session_state.get("submitted"):
+        completed_records = build_completed_records(queue)
+        st.download_button(
+            "Download completed_review.json",
+            data=json.dumps(completed_records, indent=2),
+            file_name="completed_review.json",
+            mime="application/json",
+        )
+        st.download_button(
+            "Download completed_review_summary.csv",
+            data=build_summary_csv(completed_records),
+            file_name="completed_review_summary.csv",
+            mime="text/csv",
+        )

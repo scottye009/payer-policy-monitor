@@ -3,6 +3,7 @@ import base64
 import csv
 import io
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,6 +15,14 @@ RAW_DIR = ROOT / "data" / "raw"
 SIMULATED_PRIOR_RAW_DIR = ROOT / "data" / "simulated_prior_raw"
 COMPLETED_JSON_PATH = ROOT / "data" / "review" / "completed_review.json"
 COMPLETED_CSV_PATH = ROOT / "data" / "review" / "completed_review_summary.csv"
+
+sys.path.insert(0, str(ROOT / "src"))
+from payer_policy.source_check import MONITORED_POLICY_IDS, check_for_updates, get_status  # noqa: E402
+
+POLICY_LABELS = {
+    "mri_ct_site_of_service": "MRI/CT Site of Service",
+    "sleep_studies": "Sleep Studies",
+}
 
 # The same three prior/current pairs scripts/detect_changes.py uses -- not
 # duplicated pipeline logic, just the display layer's way of finding each
@@ -100,6 +109,51 @@ def build_summary_csv(completed_records: list[dict]) -> str:
     return buf.getvalue()
 
 
+def short_hash(value: str | None) -> str:
+    return value[:12] if value else "—"
+
+
+def render_policy_update_check() -> None:
+    """Network is only touched on an explicit button click; every render,
+    including the one right after a click, reads persisted state via get_status()."""
+    st.subheader("Policy update check")
+    if st.button("Check for updates"):
+        with st.spinner("Checking UHC sources..."):
+            for policy_id in MONITORED_POLICY_IDS:
+                check_for_updates(policy_id)
+
+    rows = []
+    for policy_id in MONITORED_POLICY_IDS:
+        label = POLICY_LABELS.get(policy_id, policy_id)
+        status = get_status(policy_id)
+        if status is None:
+            rows.append({"policy": label, "status": "Not checked yet"})
+            continue
+
+        status_label = status.status.capitalize()
+        if status.status == "initialized" and status.current_is_simulated:
+            status_label += " (simulated demo baseline)"
+        rows.append(
+            {
+                "policy": label,
+                "status": status_label,
+                "checked_at": status.checked_at,
+                "previous_hash": short_hash(status.previous_hash),
+                "current_hash": short_hash(status.current_hash),
+                "current_version": (
+                    "—" if status.current_is_simulated is None
+                    else "simulated prior" if status.current_is_simulated
+                    else "live UHC PDF"
+                ),
+                "error": status.error or "",
+            }
+        )
+        if status.status == "failed":
+            st.error(f"{label}: Failed — {status.error}. Last good version kept.")
+
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
 st.set_page_config(page_title="Payer Policy Change Review", layout="wide")
 
 if "reviews" not in st.session_state:
@@ -114,6 +168,10 @@ st.caption(
     "Thin review layer over data/review/final_review_queue.json. Does not call an LLM or "
     "modify upstream detection/relevance/impact data."
 )
+
+# --- Policy update check -------------------------------------------------------
+render_policy_update_check()
+st.divider()
 
 # --- Sidebar: filters + progress -------------------------------------------------
 with st.sidebar:

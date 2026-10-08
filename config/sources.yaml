@@ -27,7 +27,12 @@ documents:
     title: Spinraza (Nusinersen)
     document_type: medical_benefit_drug_policy
     index: medical_drug
-    source_url: "https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/spinraza-nusinersen.pdf"
+    # WORK-TRIAL FAILURE TEST: deliberately broken URL so a live "Check for
+    # updates" fails (UHC redirects it to an HTML page -> "not a valid PDF")
+    # while the simulated prior stays the last good version.
+    # Real URL (restore after testing; scripts/collect.py needs it):
+    #   https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/spinraza-nusinersen.pdf
+    source_url: "https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/spinraza-nusinersen-TEST-DOES-NOT-EXIST.pdf"
 
   - id: allergen_testing
     title: Allergen Testing Policy, Professional and Facility
@@ -42,3 +47,17 @@ documents:
     role: supplemental_validation
     index: medical_drug
     source_url: "https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/sleep-studies.pdf"
+
+  # Added for the work trial's live monitoring. Their starting versions are
+  # real prior UHC PDFs provided locally in data/prior/ (no longer online).
+  - id: surgery_elbow
+    title: Surgery of the Elbow
+    document_type: medical_policy
+    index: medical_drug
+    source_url: "https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/surgery-elbow.pdf"
+
+  - id: home_health_care
+    title: Home Health, Skilled, and Custodial Care Services
+    document_type: medical_policy
+    index: medical_drug
+    source_url: "https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/home-health-care.pdf"

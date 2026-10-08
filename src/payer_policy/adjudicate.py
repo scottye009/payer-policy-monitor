@@ -1,5 +1,6 @@
 import json
 import os
+from typing import get_args
 
 import requests
 from pydantic import ValidationError
@@ -144,6 +145,24 @@ def call_llm(prompt: str, *, model: str | None = None, token: str | None = None,
         raise AdjudicationError(f"unexpected response shape from {model}: {data!r}") from exc
 
 
+# Enrichment fields with a fixed vocabulary. A value outside it (e.g.
+# billing_setting "home_health" on a home-health policy) becomes "other"
+# instead of invalidating the whole reply and discarding a valid
+# classification. Required fields are never coerced.
+_COERCIBLE_FIELDS = ("billing_setting", "service_area")
+
+
+def _coerce_enrichment_fields(payload):
+    if not isinstance(payload, dict):
+        return payload
+    payload = dict(payload)
+    for field in _COERCIBLE_FIELDS:
+        allowed = get_args(LLMAdjudication.model_fields[field].annotation)
+        if field in payload and payload[field] not in allowed:
+            payload[field] = "other"
+    return payload
+
+
 def parse_llm_response(raw_text: str) -> LLMAdjudication:
     """Parse and validate the LLM's raw reply against the required schema.
 
@@ -160,7 +179,7 @@ def parse_llm_response(raw_text: str) -> LLMAdjudication:
 
     try:
         payload = json.loads(text)
-        return LLMAdjudication(**payload)
+        return LLMAdjudication(**_coerce_enrichment_fields(payload))
     except (json.JSONDecodeError, ValidationError, TypeError):
         return LLMAdjudication(
             classification="uncertain",

@@ -1,9 +1,18 @@
+# App (streamlit run app.py) — only this is required to test the review UI.
+streamlit>=1.35.0
+
+# Collection / extraction / indexing
 requests
 PyMuPDF
 PyYAML
-pydantic
 beautifulsoup4
+
+# Change detection / adjudication
+pydantic
 sentence-transformers
+
+# Workbook builders (scripts/build_*.py, review_processing.py)
 openpyxl
-streamlit
+
+# Tests
 pytest

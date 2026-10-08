@@ -1,0 +1,94 @@
+{
+  "generated_at": "2026-10-08T19:33:23.150326+00:00",
+  "queue": "data/review/final_review_queue.json",
+  "cases_file": "data/eval/expected_cases.json",
+  "summary": {
+    "cases": 8,
+    "TP": 8,
+    "uncertain": 0,
+    "FN": 0
+  },
+  "cases": [
+    {
+      "case_id": "mri_ct-1-illinois-exclusion",
+      "matched_change_id": "mri_ct_site_of_service-0002",
+      "classification": "substantive",
+      "revision_history_match": true,
+      "result": "TP",
+      "all_matching_change_ids": [
+        "mri_ct_site_of_service-0002"
+      ]
+    },
+    {
+      "case_id": "mri_ct-2-cpt-70471",
+      "matched_change_id": "mri_ct_site_of_service-0005",
+      "classification": "substantive",
+      "revision_history_match": true,
+      "result": "TP",
+      "all_matching_change_ids": [
+        "mri_ct_site_of_service-0005"
+      ]
+    },
+    {
+      "case_id": "mri_ct-3-age-16-to-18",
+      "matched_change_id": "mri_ct_site_of_service-0003",
+      "classification": "substantive",
+      "revision_history_match": false,
+      "result": "TP",
+      "all_matching_change_ids": [
+        "mri_ct_site_of_service-0003"
+      ]
+    },
+    {
+      "case_id": "sleep-1-hsat-technically-inadequate",
+      "matched_change_id": "sleep_studies-0002",
+      "classification": "substantive",
+      "revision_history_match": true,
+      "result": "TP",
+      "all_matching_change_ids": [
+        "sleep_studies-0002"
+      ]
+    },
+    {
+      "case_id": "sleep-2-rbd-wording",
+      "matched_change_id": "sleep_studies-0004",
+      "classification": "substantive",
+      "revision_history_match": false,
+      "result": "TP",
+      "all_matching_change_ids": [
+        "sleep_studies-0004"
+      ]
+    },
+    {
+      "case_id": "sleep-3-full-night-pap-titration",
+      "matched_change_id": "sleep_studies-0006",
+      "classification": "substantive",
+      "revision_history_match": false,
+      "result": "TP",
+      "all_matching_change_ids": [
+        "sleep_studies-0006"
+      ]
+    },
+    {
+      "case_id": "sleep-4-repeat-testing-criteria",
+      "matched_change_id": "sleep_studies-0007",
+      "classification": "substantive",
+      "revision_history_match": false,
+      "result": "TP",
+      "all_matching_change_ids": [
+        "sleep_studies-0007"
+      ]
+    },
+    {
+      "case_id": "sleep-5-cardiovascular-clause-removed",
+      "matched_change_id": "sleep_studies-0007",
+      "classification": "substantive",
+      "revision_history_match": false,
+      "result": "TP",
+      "all_matching_change_ids": [
+        "sleep_studies-0007"
+      ]
+    }
+  ],
+  "potential_false_positives": []
+}

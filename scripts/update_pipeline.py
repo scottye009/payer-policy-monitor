@@ -23,6 +23,7 @@ from payer_policy.extract import extract_metadata, extract_pages
 from payer_policy.models import PolicyDocument, SourceConfig
 from payer_policy.source_check import (
     DEFAULT_DB_PATH,
+    LIVE_FETCH,
     UPDATED,
     CheckResult,
     SourceVersion,
@@ -42,8 +43,9 @@ class VersionPairFindings:
 
 
 def build_policy_document(source: SourceConfig, payer: str, version: SourceVersion) -> PolicyDocument:
-    """Identity (id/title/type) comes from config for both simulated and live
-    versions; only the version itself says whether it is simulated."""
+    """Identity (id/title/type) comes from config for every version; only the
+    version itself says where it came from (simulated prior, real local
+    prior, or live fetch)."""
     content = (ROOT / version.snapshot_path).read_bytes()
     if sha256_hex(content) != version.content_sha256:
         raise ValueError(f"snapshot {version.snapshot_path} does not match its recorded hash")
@@ -60,14 +62,15 @@ def build_policy_document(source: SourceConfig, payer: str, version: SourceVersi
         revision_date=metadata.revision_date,
         effective_date=metadata.effective_date,
         policy_number=metadata.policy_number,
-        # A simulated version was registered, never retrieved.
-        retrieved_at=None if version.is_simulated else version.retrieved_at,
+        # A local baseline (simulated or real prior) was registered from disk,
+        # never retrieved by the monitor.
+        retrieved_at=version.retrieved_at if version.origin == LIVE_FETCH else None,
         content_sha256=version.content_sha256,
         local_path=version.snapshot_path,
         pages=pages,
         is_simulated=version.is_simulated,
-        artifact_type="simulated_prior" if version.is_simulated else None,
-        source_path=version.snapshot_path if version.is_simulated else None,
+        artifact_type=None if version.origin == LIVE_FETCH else version.origin,
+        source_path=None if version.origin == LIVE_FETCH else version.snapshot_path,
     )
 
 

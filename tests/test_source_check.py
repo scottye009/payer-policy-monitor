@@ -42,7 +42,7 @@ def _snapshot_files(paths):
 def test_first_check_initializes_from_simulated_prior_without_network(paths):
     result = check_for_updates(POLICY_ID, fetch_fn=_no_network, **paths)
 
-    prior_bytes = source_check.SIMULATED_PRIORS[POLICY_ID].read_bytes()
+    prior_bytes = source_check.BASELINES[POLICY_ID].path.read_bytes()
     assert result.status == "initialized"
     assert result.current_hash == sha256_hex(prior_bytes)
     assert result.previous_hash is None
@@ -114,7 +114,7 @@ def test_empty_response_fails_through_existing_validation(paths):
 
     assert result.status == "failed"
     assert "not a valid PDF" in result.error
-    assert result.previous_hash == sha256_hex(source_check.SIMULATED_PRIORS[POLICY_ID].read_bytes())
+    assert result.previous_hash == sha256_hex(source_check.BASELINES[POLICY_ID].path.read_bytes())
 
 
 def test_reverted_document_reuses_existing_version(paths):
@@ -152,13 +152,13 @@ def test_policies_are_tracked_independently(paths):
 
 def test_unknown_policy_is_rejected(paths):
     with pytest.raises(ValueError):
-        check_for_updates("spinraza", fetch_fn=_no_network, **paths)
+        check_for_updates("allergen_testing", fetch_fn=_no_network, **paths)
 
 
 def test_clear_source_state_resets_to_simulated_baseline(paths):
     check_for_updates(POLICY_ID, fetch_fn=_no_network, **paths)
     check_for_updates(POLICY_ID, fetch_fn=_serve(LIVE_V1), **paths)
-    prior_pdf = source_check.SIMULATED_PRIORS[POLICY_ID]
+    prior_pdf = source_check.BASELINES[POLICY_ID].path
     prior_bytes = prior_pdf.read_bytes()
 
     source_check.clear_source_state(**paths)
@@ -169,3 +169,57 @@ def test_clear_source_state_resets_to_simulated_baseline(paths):
     # The simulated prior lives outside the snapshot dir and is untouched.
     assert prior_pdf.read_bytes() == prior_bytes
     assert check_for_updates(POLICY_ID, fetch_fn=_no_network, **paths).status == "initialized"
+
+
+def test_real_local_prior_initializes_as_not_simulated(paths):
+    policy_id = "surgery_elbow"
+    baseline = source_check.BASELINES[policy_id]
+    assert baseline.is_simulated is False
+
+    result = check_for_updates(policy_id, fetch_fn=_no_network, **paths)
+
+    assert result.status == "initialized"
+    assert result.current_hash == sha256_hex(baseline.path.read_bytes())
+    assert result.current_is_simulated is False
+    assert result.current_origin == "local_prior"
+    [version] = _rows(paths["db_path"], "policy_versions")
+    assert version["is_simulated"] == 0
+    assert version["source_url"] == source_check._configured_url(policy_id)
+    assert version["snapshot_path"].startswith("data/prior/")
+
+
+def test_live_update_after_real_local_prior(paths):
+    policy_id = "home_health_care"
+    check_for_updates(policy_id, fetch_fn=_no_network, **paths)
+    result = check_for_updates(policy_id, fetch_fn=_serve(LIVE_V1), **paths)
+
+    assert result.status == "updated"
+    assert result.current_origin == "live_fetch"
+    previous = source_check.get_version_by_hash(policy_id, result.previous_hash, db_path=paths["db_path"])
+    current = source_check.get_version_by_hash(policy_id, result.current_hash, db_path=paths["db_path"])
+    assert previous.origin == "local_prior" and previous.is_simulated is False
+    assert current.origin == "live_fetch"
+
+
+def test_all_monitored_policies_have_baseline_and_url():
+    assert set(source_check.MONITORED_POLICY_IDS) == {
+        "mri_ct_site_of_service", "sleep_studies", "surgery_elbow", "home_health_care", "spinraza",
+    }
+    for policy_id in source_check.MONITORED_POLICY_IDS:
+        assert source_check.BASELINES[policy_id].path.exists()
+        assert source_check._configured_url(policy_id).startswith("https://www.uhcprovider.com/")
+
+
+def test_spinraza_failure_test_initializes_then_fails_keeping_prior(paths):
+    # Initializes from the simulated prior; a live fetch that returns HTML
+    # (what UHC serves for the deliberately broken URL) fails validation.
+    init = check_for_updates("spinraza", fetch_fn=_no_network, **paths)
+    assert init.status == "initialized" and init.current_origin == "simulated_prior"
+
+    with patch("payer_policy.collect.requests.get",
+               return_value=Mock(status_code=200, content=b"<html>Page not found</html>")):
+        failed = check_for_updates("spinraza", fetch_fn=fetch_pdf, **paths)
+
+    assert failed.status == "failed"
+    assert "not a valid PDF" in failed.error
+    assert failed.previous_hash == init.current_hash

@@ -101,3 +101,40 @@ def test_end_to_end_matches_take_home_candidates(updated_check):
         assert finding["prior_is_simulated"] is True
         assert finding["relevance"] in ("relevant", "needs_investigation", "irrelevant")
         assert "potential_annual_claim_lines" in finding
+
+
+def test_real_local_prior_document_is_not_marked_simulated(tmp_path, monkeypatch):
+    policy_id = "surgery_elbow"
+    paths = {"db_path": tmp_path / "state.db", "snapshot_dir": tmp_path / "snapshots"}
+    check_for_updates(policy_id, **paths)
+    check = check_for_updates(policy_id, fetch_fn=lambda url: b"%PDF-1.7 placeholder live", **paths)
+    captured = {}
+    monkeypatch.setattr(
+        update_pipeline, "build_policy_document",
+        lambda source, payer, version: captured.setdefault(version.origin, (source, version)) and None,
+    )
+    monkeypatch.setattr(update_pipeline, "detect_changes", lambda prior, current, *, adjudicate_fn: [])
+
+    result = run_update_pipeline(policy_id, check, db_path=paths["db_path"])
+
+    assert result.previous_is_simulated is False
+    source, version = captured["local_prior"]
+    assert source.title == "Surgery of the Elbow"
+    assert version.snapshot_path.startswith("data/prior/")
+
+
+def test_build_policy_document_for_real_local_prior(tmp_path):
+    policy_id = "home_health_care"
+    paths = {"db_path": tmp_path / "state.db", "snapshot_dir": tmp_path / "snapshots"}
+    check = check_for_updates(policy_id, **paths)
+    version = update_pipeline.get_version_by_hash(policy_id, check.current_hash, db_path=paths["db_path"])
+    payer, _g, _i, sources = update_pipeline.load_sources(update_pipeline.CONFIG_PATH)
+    source = next(s for s in sources if s.id == policy_id)
+
+    doc = update_pipeline.build_policy_document(source, payer, version)
+
+    assert doc.is_simulated is False
+    assert doc.artifact_type == "local_prior"
+    assert doc.retrieved_at is None
+    assert doc.policy_number == "MP.022.27"
+    assert doc.title == "Home Health, Skilled, and Custodial Care Services"

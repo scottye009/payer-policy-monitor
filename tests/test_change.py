@@ -224,3 +224,37 @@ def test_malformed_llm_output_is_handled_explicitly():
     missing_fields = parse_llm_response('{"classification": "substantive"}')
     assert missing_fields.classification == "uncertain"
     assert missing_fields.confidence == 0.0
+
+
+def test_out_of_vocabulary_enrichment_value_keeps_the_classification():
+    # Real Qwen reply for a home-health punctuation change: valid JSON and a
+    # correct classification, but billing_setting outside the allowed values.
+    raw = (
+        '{"classification": "non_substantive", "summary": "Period changed to a semicolon.", '
+        '"reason": "Punctuation only.", "changed_dimensions": ["wording", "punctuation"], '
+        '"confidence": 0.98, "why_it_may_matter": "", "billing_setting": "home_health", '
+        '"service_area": "home_care", "age_min": null, "age_max": null, "codes": [], '
+        '"states": [], "plan_scope": [], "additional_data_needed": []}'
+    )
+    result = parse_llm_response(raw)
+
+    assert result.classification == "non_substantive"
+    assert result.confidence == 0.98
+    assert result.billing_setting == "other"
+    assert result.service_area == "other"
+
+
+def test_in_vocabulary_enrichment_values_are_untouched():
+    raw = (
+        '{"classification": "substantive", "summary": "s", "reason": "r", "confidence": 0.9, '
+        '"billing_setting": "hospital_outpatient", "service_area": "imaging"}'
+    )
+    result = parse_llm_response(raw)
+    assert (result.billing_setting, result.service_area) == ("hospital_outpatient", "imaging")
+
+
+def test_invalid_required_field_still_falls_back():
+    # Coercion is limited to enrichment fields; a bad classification is still rejected.
+    raw = '{"classification": "maybe", "summary": "s", "reason": "r", "confidence": 0.9, "billing_setting": "x"}'
+    assert parse_llm_response(raw).classification == "uncertain"
+    assert parse_llm_response('["not", "an", "object"]').classification == "uncertain"

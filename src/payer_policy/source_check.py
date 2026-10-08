@@ -4,9 +4,10 @@ Immutable PDF snapshots live on the filesystem; workflow state (versions
 seen, check outcomes) lives in SQLite so it survives Python/Streamlit
 restarts. app.py calls check_for_updates() and get_status() directly.
 
-Per policy, the first check initializes from the simulated prior without
-touching the network; every later check fetches the configured UHC URL
-and compares its SHA256 against the latest known good version.
+Per policy, the first check initializes from a local baseline PDF (a
+simulated prior, or a real prior UHC PDF provided locally) without touching
+the network; every later check fetches the configured UHC URL and compares
+its SHA256 against the latest known good version.
 """
 import os
 import shutil
@@ -27,12 +28,38 @@ MONITOR_DIR = ROOT / "data" / "monitor"
 DEFAULT_DB_PATH = MONITOR_DIR / "state.db"
 DEFAULT_SNAPSHOT_DIR = MONITOR_DIR / "snapshots"
 
-# policy_id -> its simulated prior PDF, the version each policy starts from.
-SIMULATED_PRIORS = {
-    "mri_ct_site_of_service": ROOT / "data" / "simulated_prior_raw" / "mri_ct_prior.pdf",
-    "sleep_studies": ROOT / "data" / "simulated_prior_raw" / "sleep_studies_prior.pdf",
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """The local PDF a policy's monitoring starts from."""
+
+    path: Path
+    # True for a hand-built simulated prior; False for a real prior UHC PDF
+    # that was provided locally because it is no longer online.
+    is_simulated: bool
+
+
+_PRIOR_DIR = ROOT / "data" / "prior"
+BASELINES = {
+    "mri_ct_site_of_service": Baseline(ROOT / "data" / "simulated_prior_raw" / "mri_ct_prior.pdf", True),
+    "sleep_studies": Baseline(ROOT / "data" / "simulated_prior_raw" / "sleep_studies_prior.pdf", True),
+    # Failure test: its configured URL is deliberately broken (see sources.yaml).
+    "spinraza": Baseline(ROOT / "data" / "simulated_prior_raw" / "spinraza_prior.pdf", True),
+    "surgery_elbow": Baseline(
+        _PRIOR_DIR / "UnitedHealthcare Commercial Medical & Drug Policies_surgery-elbow.pdf", False
+    ),
+    "home_health_care": Baseline(
+        _PRIOR_DIR / "UnitedHealthcare Commercial Medical & Drug Policies_home-health-care.pdf", False
+    ),
 }
-MONITORED_POLICY_IDS = tuple(SIMULATED_PRIORS)
+MONITORED_POLICY_IDS = tuple(BASELINES)
+
+# Where a stored version came from. Derived, not stored: the simulated flag
+# plus whether the snapshot is the policy's local baseline file.
+SIMULATED_PRIOR = "simulated_prior"
+LOCAL_PRIOR = "local_prior"
+LIVE_FETCH = "live_fetch"
 
 INITIALIZED = "initialized"
 UNCHANGED = "unchanged"
@@ -77,6 +104,7 @@ class CheckResult:
     current_hash: str | None = None
     current_snapshot_path: str | None = None
     current_is_simulated: bool | None = None
+    current_origin: str | None = None
     error: str | None = None
 
 
@@ -88,6 +116,16 @@ class SourceVersion:
     snapshot_path: str  # repo-relative, or absolute outside the repo
     retrieved_at: str
     is_simulated: bool
+    origin: str
+
+
+def version_origin(policy_id: str, snapshot_path: str, is_simulated: bool) -> str:
+    if is_simulated:
+        return SIMULATED_PRIOR
+    baseline = BASELINES.get(policy_id)
+    if baseline is not None and snapshot_path == _stored_path(baseline.path):
+        return LOCAL_PRIOR
+    return LIVE_FETCH
 
 
 def check_for_updates(
@@ -102,7 +140,7 @@ def check_for_updates(
     with closing(_connect(db_path)) as conn:
         previous = _latest_good_version(conn, policy_id)
         if previous is None:
-            _initialize_from_simulated_prior(conn, policy_id, source_url)
+            _initialize_from_baseline(conn, policy_id, source_url)
         else:
             _check_live_source(conn, policy_id, source_url, previous, snapshot_dir, fetch_fn)
     return get_status(policy_id, db_path=db_path)
@@ -129,6 +167,7 @@ def get_status(policy_id: str, *, db_path: Path = DEFAULT_DB_PATH) -> CheckResul
         ).fetchone()
     if row is None:
         return None
+    current_is_simulated = None if row["current_is_simulated"] is None else bool(row["current_is_simulated"])
     return CheckResult(
         policy_id=row["policy_id"],
         source_url=row["source_url"],
@@ -138,7 +177,11 @@ def get_status(policy_id: str, *, db_path: Path = DEFAULT_DB_PATH) -> CheckResul
         previous_snapshot_path=row["previous_snapshot_path"],
         current_hash=row["current_hash"],
         current_snapshot_path=row["current_snapshot_path"],
-        current_is_simulated=None if row["current_is_simulated"] is None else bool(row["current_is_simulated"]),
+        current_is_simulated=current_is_simulated,
+        current_origin=(
+            None if row["current_snapshot_path"] is None
+            else version_origin(policy_id, row["current_snapshot_path"], current_is_simulated)
+        ),
         error=row["error"],
     )
 
@@ -161,29 +204,31 @@ def get_version_by_hash(
         snapshot_path=row["snapshot_path"],
         retrieved_at=row["retrieved_at"],
         is_simulated=bool(row["is_simulated"]),
+        origin=version_origin(policy_id, row["snapshot_path"], bool(row["is_simulated"])),
     )
 
 
 def clear_source_state(*, db_path: Path = DEFAULT_DB_PATH, snapshot_dir: Path = DEFAULT_SNAPSHOT_DIR) -> None:
     """Demo reset: forget all versions and checks and delete captured live
-    snapshots. Simulated priors live outside snapshot_dir and are untouched."""
+    snapshots. Baseline PDFs live outside snapshot_dir and are untouched."""
     with closing(_connect(db_path)) as conn, conn:
         conn.execute("DELETE FROM source_checks")
         conn.execute("DELETE FROM policy_versions")
     shutil.rmtree(snapshot_dir, ignore_errors=True)
 
 
-def _initialize_from_simulated_prior(conn: sqlite3.Connection, policy_id: str, source_url: str) -> None:
-    prior_path = SIMULATED_PRIORS[policy_id]
+def _initialize_from_baseline(conn: sqlite3.Connection, policy_id: str, source_url: str) -> None:
+    baseline = BASELINES[policy_id]
     try:
-        content = prior_path.read_bytes()
+        content = baseline.path.read_bytes()
     except OSError as exc:
-        _record_check(conn, policy_id, source_url, FAILED, error=f"simulated prior unreadable: {exc}")
+        _record_check(conn, policy_id, source_url, FAILED, error=f"baseline prior unreadable: {exc}")
         return
-    # source_url is the UHC URL this simulated version stands in for; it was
-    # never downloaded from there, which is_simulated makes explicit.
+    # source_url is the UHC URL this version stands in for; the monitor never
+    # downloaded it from there (is_simulated / origin make that explicit).
     current = _get_or_add_version(
-        conn, policy_id, sha256_hex(content), source_url, _stored_path(prior_path), is_simulated=True
+        conn, policy_id, sha256_hex(content), source_url, _stored_path(baseline.path),
+        is_simulated=baseline.is_simulated,
     )
     _record_check(conn, policy_id, source_url, INITIALIZED, current=current)
 
@@ -221,7 +266,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 
 def _configured_url(policy_id: str) -> str:
-    if policy_id not in SIMULATED_PRIORS:
+    if policy_id not in BASELINES:
         raise ValueError(f"unknown monitored policy: {policy_id!r}")
     with CONFIG_PATH.open() as f:
         documents = yaml.safe_load(f)["documents"]

@@ -1,0 +1,61 @@
+{
+  "note": "The 8 expected substantive changes for the two monitored policies, taken from tests/fixtures/SIMULATED_PRIORS_GROUND_TRUTH.json (documented reversions + the injected unlisted MRI/CT change). Anchors are case/whitespace-insensitive substrings: a finding matches when every before_has/after_has phrase is present and every before_lacks/after_lacks phrase is absent.",
+  "cases": [
+    {
+      "case_id": "mri_ct-1-illinois-exclusion",
+      "document_id": "mri_ct_site_of_service",
+      "ground_truth": "Individual Exchange exclusion list: Illinois added",
+      "before_lacks": ["illinois"],
+      "after_has": ["except for illinois"]
+    },
+    {
+      "case_id": "mri_ct-2-cpt-70471",
+      "document_id": "mri_ct_site_of_service",
+      "ground_truth": "CPT 70471 added to applicable codes",
+      "before_lacks": ["70471"],
+      "after_has": ["70471"]
+    },
+    {
+      "case_id": "mri_ct-3-age-16-to-18",
+      "document_id": "mri_ct_site_of_service",
+      "ground_truth": "Injected, not in revision history: Under 16 -> Under 18 years of age",
+      "before_has": ["under 16 years of age"],
+      "after_has": ["under 18 years of age"]
+    },
+    {
+      "case_id": "sleep-1-hsat-technically-inadequate",
+      "document_id": "sleep_studies",
+      "ground_truth": "'technically inadequate' removed from HSAT criterion",
+      "before_has": ["technically inadequate"],
+      "after_lacks": ["technically inadequate"]
+    },
+    {
+      "case_id": "sleep-2-rbd-wording",
+      "document_id": "sleep_studies",
+      "ground_truth": "Parasomnia: 'sleep behaviors or behaviors suspicious of RBD'",
+      "before_lacks": ["sleep behaviors or behaviors"],
+      "after_has": ["sleep behaviors or behaviors"]
+    },
+    {
+      "case_id": "sleep-3-full-night-pap-titration",
+      "document_id": "sleep_studies",
+      "ground_truth": "Full-night PAP titration: 'confirmed OSA or other sleep-disordered breathing'",
+      "before_has": ["not feasible"],
+      "after_has": ["other sleep-disordered breathing"]
+    },
+    {
+      "case_id": "sleep-4-repeat-testing-criteria",
+      "document_id": "sleep_studies",
+      "ground_truth": "Repeat testing: adds 'when the above criteria for an attended study are met'",
+      "before_lacks": ["when the above criteria for an attended study are met"],
+      "after_has": ["when the above criteria for an attended study are met"]
+    },
+    {
+      "case_id": "sleep-5-cardiovascular-clause-removed",
+      "document_id": "sleep_studies",
+      "ground_truth": "Repeat testing: cardiovascular-disease clause removed",
+      "before_has": ["cardiovascular disease"],
+      "after_lacks": ["cardiovascular disease"]
+    }
+  ]
+}

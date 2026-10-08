@@ -41,8 +41,32 @@ from update_pipeline import run_update_pipeline  # noqa: E402
 POLICY_LABELS = {
     "mri_ct_site_of_service": "MRI/CT Site of Service",
     "sleep_studies": "Sleep Studies",
+    "surgery_elbow": "Surgery of the Elbow",
+    "home_health_care": "Home Health Care",
+    "spinraza": "Spinraza (failure test)",
+}
+# How each version origin is named in the UI.
+ORIGIN_LABELS = {
+    "simulated_prior": "simulated prior",
+    "local_prior": "local prior PDF",
+    "live_fetch": "live UHC PDF",
+}
+INITIALIZED_SUFFIX = {
+    "simulated_prior": " (simulated demo baseline)",
+    "local_prior": " (real prior UHC PDF, provided locally)",
 }
 CONFIG_PATH = ROOT / "config" / "sources.yaml"
+
+# Streamlit gives each keyed widget's container a "st-key-<key>" class; this
+# colours only the "Analyze all updates" button green (other primary buttons
+# keep the theme colour).
+ANALYZE_ALL_CSS = """
+<style>
+.st-key-analyze_all button { background-color: #1e8e3e; border-color: #1e8e3e; color: #ffffff; }
+.st-key-analyze_all button:hover { background-color: #17733a; border-color: #17733a; color: #ffffff; }
+.st-key-analyze_all button:active { background-color: #135f30; border-color: #135f30; color: #ffffff; }
+</style>
+"""
 
 REVIEW_ICONS = {"pending": "⏳", "reviewed": "✅", "dismissed": "🚫"}
 
@@ -100,7 +124,9 @@ def render_pdf(pdf_path: Path, page: int | None, key: str) -> None:
         return
     data = pdf_path.read_bytes()
     b64 = base64.b64encode(data).decode()
-    fragment = f"#page={page}" if page else ""
+    # Explicit zoom: a viewer that loads inside a not-yet-visible tab measures
+    # ~0 width and would otherwise "fit" the page to a tiny size.
+    fragment = f"#page={page}&zoom=100" if page else "#zoom=100"
     st.markdown(
         f'<iframe src="data:application/pdf;base64,{b64}{fragment}" '
         f'width="100%" height="600" style="border:1px solid #ddd;" title="{key}"></iframe>',
@@ -160,8 +186,8 @@ def render_policy_update_check() -> None:
             continue
 
         status_label = status.status.capitalize()
-        if status.status == "initialized" and status.current_is_simulated:
-            status_label += " (simulated demo baseline)"
+        if status.status == "initialized":
+            status_label += INITIALIZED_SUFFIX.get(status.current_origin, "")
         rows.append(
             {
                 "policy": label,
@@ -169,11 +195,7 @@ def render_policy_update_check() -> None:
                 "checked_at": status.checked_at,
                 "previous_hash": short_hash(status.previous_hash),
                 "current_hash": short_hash(status.current_hash),
-                "current_version": (
-                    "—" if status.current_is_simulated is None
-                    else "simulated prior" if status.current_is_simulated
-                    else "live UHC PDF"
-                ),
+                "current_version": ORIGIN_LABELS.get(status.current_origin, "—"),
                 "error": status.error or "",
             }
         )
@@ -184,30 +206,63 @@ def render_policy_update_check() -> None:
     render_analyze_changes(statuses)
 
 
+def saved_count(policy_id: str, status) -> int:
+    """Findings already saved for this check's exact version pair."""
+    return sum(
+        1 for f in list_findings(policy_id)
+        if (f.previous_hash, f.current_hash) == (status.previous_hash, status.current_hash)
+    )
+
+
+def analyze_policy(policy_id: str, status) -> None:
+    """Run the existing pipeline for one UPDATED version pair and save its
+    findings. The outcome is queued and shown after the follow-up rerun."""
+    label = POLICY_LABELS.get(policy_id, policy_id)
+    messages = st.session_state.setdefault("analysis_messages", [])
+    try:
+        result = run_update_pipeline(policy_id, status)
+    except Exception as exc:
+        messages.append(("error", f"{label}: analysis failed — {exc}"))
+        return
+    added = save_findings(policy_id, result.previous_hash, result.current_hash, result.findings)
+    messages.append(("success", f"{label}: {len(result.findings)} finding(s) for this comparison, {added} new."))
+
+
 def render_analyze_changes(statuses: dict) -> None:
     """Only an UPDATED check offers analysis, and only an explicit click runs
     the pipeline (MPNet + Qwen). Findings go straight to SQLite; re-analyzing
     the same version pair adds nothing and never resets a review."""
-    for policy_id, status in statuses.items():
-        if status is None or status.status != "updated":
-            continue
-        label = POLICY_LABELS.get(policy_id, policy_id)
-        saved = sum(
-            1 for f in list_findings(policy_id)
-            if (f.previous_hash, f.current_hash) == (status.previous_hash, status.current_hash)
-        )
+    # Outcomes of the analysis that triggered this rerun.
+    for kind, text in st.session_state.pop("analysis_messages", []):
+        (st.error if kind == "error" else st.success)(text)
 
+    updated = {pid: s for pid, s in statuses.items() if s is not None and s.status == "updated"}
+    if not updated:
+        return
+
+    not_analyzed = [pid for pid, s in updated.items() if saved_count(pid, s) == 0]
+    if not_analyzed:
+        names = ", ".join(POLICY_LABELS.get(pid, pid) for pid in not_analyzed)
+        st.markdown(ANALYZE_ALL_CSS, unsafe_allow_html=True)
+        if st.button(f"Analyze all updates ({len(not_analyzed)})", key="analyze_all", type="primary",
+                     help=f"Runs analysis for: {names}. Policies already analyzed are skipped."):
+            with st.status(f"Analyzing {len(not_analyzed)} updated policies...", expanded=True) as progress:
+                for i, policy_id in enumerate(not_analyzed, start=1):
+                    st.write(f"{i}/{len(not_analyzed)} · {POLICY_LABELS.get(policy_id, policy_id)}")
+                    analyze_policy(policy_id, updated[policy_id])
+                progress.update(label="Analysis finished", state="complete")
+            # Rerun so button counts, captions and the findings list reflect the new findings.
+            st.rerun()
+    else:
+        st.caption("All updated policies have been analyzed.")
+
+    for policy_id, status in updated.items():
+        label = POLICY_LABELS.get(policy_id, policy_id)
         if st.button(f"Analyze changes — {label}", key=f"analyze_{policy_id}"):
             with st.spinner(f"Analyzing {label} (MPNet alignment + Qwen adjudication)..."):
-                try:
-                    result = run_update_pipeline(policy_id, status)
-                except Exception as exc:
-                    st.error(f"{label}: analysis failed — {exc}")
-                else:
-                    added = save_findings(policy_id, result.previous_hash, result.current_hash, result.findings)
-                    saved = len(result.findings)
-                    st.success(f"{label}: {saved} finding(s) for this comparison, {added} new.")
-        elif saved:
+                analyze_policy(policy_id, status)
+            st.rerun()
+        elif saved := saved_count(policy_id, status):
             st.caption(
                 f"{label}: {saved} finding(s) already saved for this comparison. Re-analyzing "
                 "won't duplicate them or reset reviews."
@@ -281,8 +336,11 @@ def finding_label(f) -> str:
 def _version_line(name: str, version) -> str:
     if version is None:
         return f"- **{name}:** not found"
-    kind = "SIMULATED prior (registered, not downloaded)" if version.is_simulated else "live UHC PDF"
-    timing = "registered" if version.is_simulated else "retrieved"
+    kind = {
+        "simulated_prior": "SIMULATED prior (registered, not downloaded)",
+        "local_prior": "real prior UHC PDF, provided locally (registered, not downloaded by the monitor)",
+    }.get(version.origin, "live UHC PDF")
+    timing = "retrieved" if version.origin == "live_fetch" else "registered"
     return (
         f"- **{name}:** {kind} · sha256 `{short_hash(version.content_sha256)}` · "
         f"`{version.snapshot_path}` · {timing} {version.retrieved_at}"
